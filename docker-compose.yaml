@@ -11,7 +11,7 @@ services:
       - "7077:7077"
     volumes:
       - ./:/opt/workspace
-      - ./Pipeline/data/raw_data:/opt/dataset
+      - ./data/raw_data:/opt/dataset
 
   spark-worker-1:
     image: apache/spark:3.5.0
@@ -27,7 +27,7 @@ services:
       - "8081:8081"
     volumes:
       - ./:/opt/workspace
-      - ./Pipeline/data/raw_data:/opt/dataset
+      - ./data/raw_data:/opt/dataset
     mem_limit: 4g
     cpus: 3
 
@@ -45,7 +45,7 @@ services:
       - "8082:8081"
     volumes:
       - ./:/opt/workspace
-      - ./Pipeline/data/raw_data:/opt/dataset
+      - ./data/raw_data:/opt/dataset
     mem_limit: 4g
     cpus: 3
 
@@ -56,11 +56,11 @@ services:
       - spark-master
     volumes:
       - ./:/opt/workspace
-      - ./Pipeline/data/raw_data:/opt/dataset
+      - ./data/raw_data:/opt/dataset
     entrypoint: >
       /opt/spark/bin/spark-submit
       --master spark://spark-master:7077
       --total-executor-cores 6
       --executor-cores 2
       --executor-memory 2G
-      /opt/workspace/your_app.py
+      /opt/workspace/main.py
