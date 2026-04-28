@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CountriesModule } from './countries/countries.module';
 import { IndicatorsModule } from './indicators/indicators.module';
+import { AnalyticsModule } from './analytics/analytics.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { IndicatorsModule } from './indicators/indicators.module';
     }),
     CountriesModule,
     IndicatorsModule,
+    AnalyticsModule,
   ],
   controllers: [],
   providers: [],
