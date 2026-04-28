@@ -14,28 +14,28 @@ export class GoldStructuralComposition {
   @Column({ type: 'float', nullable: true })
   decade: number | null;
 
-  @Column({ type: 'float', nullable: true, name: '"GDP_value"' })
+  @Column({ type: 'float', nullable: true, name: 'GDP_value' })
   GDP_value: number | null;
 
-  @Column({ type: 'float', nullable: true, name: '"GFCF_value"' })
+  @Column({ type: 'float', nullable: true, name: 'GFCF_value' })
   GFCF_value: number | null;
 
-  @Column({ type: 'float', nullable: true, name: '"GNI_value"' })
+  @Column({ type: 'float', nullable: true, name: 'GNI_value' })
   GNI_value: number | null;
 
-  @Column({ type: 'float', nullable: true, name: '"Agri_VA"' })
+  @Column({ type: 'float', nullable: true, name: 'Agri_VA' })
   Agri_VA: number | null;
 
-  @Column({ type: 'float', nullable: true, name: '"Manuf_VA"' })
+  @Column({ type: 'float', nullable: true, name: 'Manuf_VA' })
   Manuf_VA: number | null;
 
-  @Column({ type: 'float', nullable: true, name: '"VA_FoodBev"' })
+  @Column({ type: 'float', nullable: true, name: 'VA_FoodBev' })
   VA_FoodBev: number | null;
 
-  @Column({ type: 'float', nullable: true, name: '"GFCF_to_GDP"' })
+  @Column({ type: 'float', nullable: true, name: 'GFCF_to_GDP' })
   GFCF_to_GDP: number | null;
 
-  @Column({ type: 'float', nullable: true, name: '"GNI_to_GDP"' })
+  @Column({ type: 'float', nullable: true, name: 'GNI_to_GDP' })
   GNI_to_GDP: number | null;
 
   @Column({ type: 'float', nullable: true })
@@ -47,7 +47,7 @@ export class GoldStructuralComposition {
   @Column({ type: 'float', nullable: true })
   food_bev_share_manuf: number | null;
 
-  @Column({ type: 'float', nullable: true, name: '"GDP_growth_YoY"' })
+  @Column({ type: 'float', nullable: true, name: 'GDP_growth_YoY' })
   GDP_growth_YoY: number | null;
 
   @Column({ type: 'float', nullable: true })

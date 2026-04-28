@@ -33,9 +33,9 @@ export class CountriesService {
       .select([
         'g.country_code as country_code',
         'g.year as year',
-        'g.rGDP_growth_YoY as actual',
-        'a.rGDP_growth_YoY_trend as trend',
-        'a.rGDP_growth_YoY_anomaly_score as anomaly_score'
+        '"g"."rGDP_growth_YoY" as actual', 
+        '"a"."rGDP_growth_YoY_trend" as trend',
+        '"a"."rGDP_growth_YoY_anomaly_score" as anomaly_score'
       ])
       .innerJoin(
         AnalyticsGoldGrowthDynamics,
