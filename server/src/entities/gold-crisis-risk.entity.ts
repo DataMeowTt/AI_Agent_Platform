@@ -11,13 +11,13 @@ export class GoldCrisisRisk {
   @Column({ type: 'text' })
   country: string;
 
-  @Column({ type: 'smallint', nullable: true, name: '"SovDebtCrisis"' })
+  @Column({ type: 'smallint', nullable: true, name: 'SovDebtCrisis' })
   SovDebtCrisis: number | null;
 
-  @Column({ type: 'smallint', nullable: true, name: '"CurrencyCrisis"' })
+  @Column({ type: 'smallint', nullable: true, name: 'CurrencyCrisis' })
   CurrencyCrisis: number | null;
 
-  @Column({ type: 'smallint', nullable: true, name: '"BankingCrisis"' })
+  @Column({ type: 'smallint', nullable: true, name: 'BankingCrisis' })
   BankingCrisis: number | null;
 
   @Column({ type: 'smallint', nullable: true })
@@ -26,19 +26,19 @@ export class GoldCrisisRisk {
   @Column({ type: 'smallint', nullable: true })
   crisis_any: number | null;
 
-  @Column({ type: 'float', nullable: true, name: '"REER_deviation"' })
+  @Column({ type: 'float', nullable: true, name: 'REER_deviation' })
   REER_deviation: number | null;
 
   @Column({ type: 'float', nullable: true })
   spending_efficiency: number | null;
 
-  @Column({ type: 'float', nullable: true, name: '"govdebt_GDP"' })
+  @Column({ type: 'float', nullable: true, name: 'govdebt_GDP' })
   govdebt_GDP: number | null;
 
-  @Column({ type: 'float', nullable: true, name: '"fiscal_balance_GDP"' })
+  @Column({ type: 'float', nullable: true, name: 'fiscal_balance_GDP' })
   fiscal_balance_GDP: number | null;
 
-  @Column({ type: 'float', nullable: true, name: '"rGDP_growth_YoY"' })
+  @Column({ type: 'float', nullable: true, name: 'rGDP_growth_YoY' })
   rGDP_growth_YoY: number | null;
 
   @Column({ type: 'text', nullable: true })

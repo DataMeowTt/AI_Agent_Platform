@@ -11,19 +11,19 @@ export class GoldFiscalMonetary {
   @Column({ type: 'text' })
   country: string;
 
-  @Column({ type: 'float', nullable: true, name: '"govdebt_GDP"' })
+  @Column({ type: 'float', nullable: true, name: 'govdebt_GDP' })
   govdebt_GDP: number | null;
 
-  @Column({ type: 'float', nullable: true, name: '"debt_change_YoY"' })
+  @Column({ type: 'float', nullable: true, name: 'debt_change_YoY' })
   debt_change_YoY: number | null;
 
-  @Column({ type: 'float', nullable: true, name: '"govrev_GDP"' })
+  @Column({ type: 'float', nullable: true, name: 'govrev_GDP' })
   govrev_GDP: number | null;
 
-  @Column({ type: 'float', nullable: true, name: '"govexp_GDP"' })
+  @Column({ type: 'float', nullable: true, name: 'govexp_GDP' })
   govexp_GDP: number | null;
 
-  @Column({ type: 'float', nullable: true, name: '"fiscal_balance_GDP"' })
+  @Column({ type: 'float', nullable: true, name: 'fiscal_balance_GDP' })
   fiscal_balance_GDP: number | null;
 
   @Column({ type: 'float', nullable: true })
@@ -38,7 +38,7 @@ export class GoldFiscalMonetary {
   @Column({ type: 'float', nullable: true })
   real_interest_rate: number | null;
 
-  @Column({ type: 'float', nullable: true, name: '"tax_revenue_pct_GDP"' })
+  @Column({ type: 'float', nullable: true, name: 'tax_revenue_pct_GDP' })
   tax_revenue_pct_GDP: number | null;
 
   @Column({ type: 'float', nullable: true })

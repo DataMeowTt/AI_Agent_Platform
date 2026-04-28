@@ -11,25 +11,25 @@ export class GoldGrowthDynamics {
   @Column({ type: 'text' })
   country: string;
 
-  @Column({ type: 'float', nullable: true, name: '"rGDP_growth_YoY"' })
+  @Column({ type: 'float', nullable: true, name: 'rGDP_growth_YoY' })
   rGDP_growth_YoY: number | null;
 
   @Column({ type: 'float', nullable: true })
   rolling_mean_5yr: number | null;
 
-  @Column({ type: 'float', nullable: true, name: '"GDP_growth_YoY"' })
+  @Column({ type: 'float', nullable: true, name: 'GDP_growth_YoY' })
   GDP_growth_YoY: number | null;
 
-  @Column({ type: 'float', nullable: true, name: '"GDP_growth_trend_5yr"' })
+  @Column({ type: 'float', nullable: true, name: 'GDP_growth_trend_5yr' })
   GDP_growth_trend_5yr: number | null;
 
   @Column({ type: 'float', nullable: true })
   trend_deviation: number | null;
 
-  @Column({ type: 'float', nullable: true, name: '"GDP_pc_growth_gap"' })
+  @Column({ type: 'float', nullable: true, name: 'GDP_pc_growth_gap' })
   GDP_pc_growth_gap: number | null;
 
-  @Column({ type: 'float', nullable: true, name: '"log_rGDP_pc_USD"' })
+  @Column({ type: 'float', nullable: true, name: 'log_rGDP_pc_USD' })
   log_rGDP_pc_USD: number | null;
 
   @Column({ type: 'text', nullable: true })
