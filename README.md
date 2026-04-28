@@ -32,19 +32,19 @@ A government wants to leverage both national and cross-country data to derive ec
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                                                             │
-│   📥 INGESTION          Multi-source data collection        │
+│      INGESTION          Multi-source data collection        │
 │        │                (domestic & international APIs,     │
-│        │                 files, databases)                  │
+│        │                files, databases)                   │
 │        ▼                                                    │
-│   ⚙️  PROCESSING        Cleaning · Transformation           │
+│       PROCESSING        Cleaning · Transformation           │ 
 │        │                Enrichment · Feature Engineering    │
 │        │                                                    │
 │        ▼                                                    │
-│   🤖  AI LAYER          Economic analysis & insight         │
+│      AI LAYER           Economic analysis & insight         │
 │        │                generation via AI Agent             │
 │        │                                                    │
 │        ▼                                                    │
-│   📊  DASHBOARD         Insight visualization &             │
+│     DASHBOARD           Insight visualization &             │
 │                         decision-support interface          │
 └─────────────────────────────────────────────────────────────┘
 ```
