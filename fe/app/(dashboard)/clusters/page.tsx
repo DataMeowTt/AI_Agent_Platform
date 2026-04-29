@@ -2,9 +2,14 @@
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { useClusters } from '@/lib/hooks/useClusters';
 import { useDataState } from '@/lib/hooks/useDataState';
-import ClusterPieChart from '@/components/charts/PieChart';
+import dynamic from 'next/dynamic';
 import { ChartSkeleton } from '@/components/ui/Skeletons';
 import { useMemo } from 'react';
+
+const ClusterPieChart = dynamic(() => import('@/components/charts/PieChart'), {
+  ssr: false,
+  loading: () => <ChartSkeleton />
+});
 
 export default function ClustersPage() {
   const [year, setYear] = useUrlState<number>('year', 2022);
