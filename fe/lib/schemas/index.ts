@@ -36,6 +36,7 @@ export const parseArray = <T>(schema: z.ZodType<T>, data: unknown): T[] => {
 };
 
 export const countryAnalyticsRowSchema = z.object({
+  country_code: z.string(),
   year: z.number(),
   actual_growth: z.number().nullable().optional(),
   trend_growth: z.number().nullable().optional(),

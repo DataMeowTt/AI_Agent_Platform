@@ -29,6 +29,7 @@ export interface ClusterItem {
 }
 
 export interface CountryAnalyticsRow {
+  country_code: string;
   year: number;
   actual_growth?: number | null;
   trend_growth?: number | null;
