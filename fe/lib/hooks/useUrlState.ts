@@ -1,11 +1,12 @@
 'use client';
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 export function useUrlState<T>(key: string, defaultValue: T): [T, (val: T) => void] {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+
   const [state, setState] = useState<T>(() => {
     const val = searchParams.get(key);
     if (val === null) return defaultValue;
@@ -14,27 +15,41 @@ export function useUrlState<T>(key: string, defaultValue: T): [T, (val: T) => vo
     return val as T;
   });
 
-  const syncToUrl = useCallback((val: T) => {
+  const isSyncingFromUrl = useRef(false);
+
+  useEffect(() => {
+    if (isSyncingFromUrl.current) {
+      isSyncingFromUrl.current = false;
+      return;
+    }
+
     const params = new URLSearchParams(searchParams.toString());
-    const strVal = val === defaultValue || !val || (Array.isArray(val) && val.length === 0)
+    const strVal = state === defaultValue || !state || (Array.isArray(state) && state.length === 0)
       ? null
-      : (Array.isArray(val) ? val.join(',') : String(val));
+      : (Array.isArray(state) ? state.join(',') : String(state));
+
     if (params.get(key) !== strVal) {
       if (strVal) params.set(key, strVal); else params.delete(key);
       router.replace(`${pathname}?${params.toString()}`, { scroll: false });
     }
-  }, [pathname, searchParams, key, defaultValue, router]);
-
-  useEffect(() => {
-    syncToUrl(state);
-  }, [state, syncToUrl]);
+  }, [state, pathname, router, key, defaultValue, searchParams]);
 
   useEffect(() => {
     const val = searchParams.get(key);
-    if (val === null) setState(defaultValue);
-    else if (typeof defaultValue === 'number') setState(Number(val) as T);
-    else if (Array.isArray(defaultValue)) setState(val.split(',') as T);
-    else setState(val as T);
+    let next: T;
+    if (val === null) next = defaultValue;
+    else if (typeof defaultValue === 'number') next = Number(val) as T;
+    else if (Array.isArray(defaultValue)) next = val.split(',') as T;
+    else next = val as T;
+
+    const isDifferent = typeof next === 'object'
+      ? JSON.stringify(next) !== JSON.stringify(state)
+      : next !== state;
+
+    if (isDifferent) {
+      isSyncingFromUrl.current = true;
+      setState(next);
+    }
   }, [searchParams.get(key)]);
 
   return [state, setState];

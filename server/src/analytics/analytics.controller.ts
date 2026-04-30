@@ -15,8 +15,9 @@ export class AnalyticsController {
     @Query('country') country?: string,
     @Query('indicator') indicator?: string,
     @Query('threshold', new DefaultValuePipe(0.75), ParseFloatPipe) threshold?: number,
-    @Query('limit', new DefaultValuePipe(100), ParseIntPipe) limit?: number,
+    @Query('limit', new DefaultValuePipe(15), ParseIntPipe) limit?: number,
+    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset?: number,
   ) {
-    return this.analyticsService.getAnomalies(country, indicator, threshold, limit);
+    return this.analyticsService.getAnomalies(country, indicator, threshold, limit, offset);
   }
 }

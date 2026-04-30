@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { Search, X } from 'lucide-react';
-
+import { cn } from '@/lib/utils/cn';
 interface SearchInputProps {
   placeholder?: string;
   value: string;
@@ -23,7 +23,7 @@ export default function SearchInput({ placeholder = 'Tìm kiếm...', value, onC
   }, [localValue]);
 
   return (
-    <div className="relative w-full min-w-[240px]">
+    <div className={cn("relative w-full min-w-[240px]", className)}>
       <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
       <input
         type="text"
