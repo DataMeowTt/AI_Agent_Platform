@@ -5,15 +5,16 @@ import { TableSkeleton } from '@/components/ui/Skeletons';
 import { Search, Globe2, Filter } from 'lucide-react';
 import { useState, useMemo } from 'react';
 import Link from 'next/link';
+import { Country } from '@/lib/types';
 
 export default function CountriesPage() {
   const { data: countries, isLoading, isEmpty, isError, error } = useDataState(useCountries());
   const [search, setSearch] = useState('');
 
   const filteredCountries = useMemo(() => {
-    if (!countries) return [];
+    const countryList = (countries as Country[]) || [];
     const q = search.toLowerCase();
-    return countries.filter(c =>
+    return countryList.filter((c) =>
       c.country_name.toLowerCase().includes(q) || c.country_code.toLowerCase().includes(q)
     );
   }, [countries, search]);

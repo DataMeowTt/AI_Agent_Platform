@@ -33,7 +33,6 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Grid chính: Metrics + Context Panel */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* 3 Metrics Cards */}
         <div className="lg:col-span-8 grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -66,9 +65,6 @@ export default function DashboardPage() {
           <ContextPanel
             title="Trạng thái Hệ thống"
             items={contextItems}
-            actions={[
-              { label: 'Làm mới dữ liệu', onClick: () => window.location.reload(), variant: 'secondary' },
-            ]}
           />
         </div>
       </div>
