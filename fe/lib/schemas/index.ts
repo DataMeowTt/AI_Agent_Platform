@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const countrySchema = z.object({
   country_code: z.string(),
   country_name: z.string(),
-  region: z.string().optional(),
+  region: z.string().nullable().optional(),
 });
 
 export const anomalySchema = z.object({
