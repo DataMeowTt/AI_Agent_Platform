@@ -1,12 +1,11 @@
 'use client';
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 export function useUrlState<T>(key: string, defaultValue: T): [T, (val: T) => void] {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-
   const [state, setState] = useState<T>(() => {
     const val = searchParams.get(key);
     if (val === null) return defaultValue;
@@ -15,17 +14,20 @@ export function useUrlState<T>(key: string, defaultValue: T): [T, (val: T) => vo
     return val as T;
   });
 
-  useEffect(() => {
+  const syncToUrl = useCallback((val: T) => {
     const params = new URLSearchParams(searchParams.toString());
-    const strVal = state === defaultValue || !state || (Array.isArray(state) && state.length === 0) 
-      ? null 
-      : (Array.isArray(state) ? state.join(',') : String(state));
-
+    const strVal = val === defaultValue || !val || (Array.isArray(val) && val.length === 0)
+      ? null
+      : (Array.isArray(val) ? val.join(',') : String(val));
     if (params.get(key) !== strVal) {
       if (strVal) params.set(key, strVal); else params.delete(key);
       router.replace(`${pathname}?${params.toString()}`, { scroll: false });
     }
-  }, [state]);
+  }, [pathname, searchParams, key, defaultValue, router]);
+
+  useEffect(() => {
+    syncToUrl(state);
+  }, [state, syncToUrl]);
 
   useEffect(() => {
     const val = searchParams.get(key);

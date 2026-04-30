@@ -1,5 +1,6 @@
 import { useQueries } from '@tanstack/react-query';
 import { countriesApi } from '@/lib/api/endpoints';
+import { useIndicators } from './useIndicators';
 import { parseArray, countryAnalyticsRowSchema } from '@/lib/schemas';
 import { CountryAnalyticsRow, CompareGroupedData } from '@/lib/types';
 
@@ -15,6 +16,7 @@ const INDICATOR_KEY_MAP: Record<string, keyof CountryAnalyticsRow> = {
 };
 
 export const useCompare = (countryCodes: string[], indicator: string) => {
+  const { data: indicators } = useIndicators();
   const actualKey = INDICATOR_KEY_MAP[indicator] ?? 'actual_growth';
 
   const results = useQueries({
@@ -30,12 +32,12 @@ export const useCompare = (countryCodes: string[], indicator: string) => {
         }));
       },
       enabled: countryCodes.length > 0,
+      staleTime: 10 * 60 * 1000,
     })),
   });
 
   const isLoading = results.some(r => r.isLoading);
   const error = results.find(r => r.error)?.error;
-
   const flatData = results
     .map(r => r.data ?? [])
     .flat() as { year: number; value: number | null; country_code: string }[];
@@ -46,5 +48,7 @@ export const useCompare = (countryCodes: string[], indicator: string) => {
     grouped[item.country_code].push({ year: item.year, value: item.value });
   });
 
-  return { data: grouped, isLoading, error };
+  const meta = indicators?.find(i => i.code === indicator);
+
+  return { data: grouped, isLoading, error, indicatorName: meta?.name || indicator, indicatorUnit: meta?.unit || '' };
 };

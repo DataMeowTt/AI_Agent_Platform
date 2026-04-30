@@ -5,8 +5,6 @@ export function useDataState<TData>(
   isEmptyFn?: (data: TData | undefined) => boolean
 ) {
   const { data, isLoading, isError, error } = queryResult;
-  
-  const isEmpty = !isLoading && !isError && (isEmptyFn ? isEmptyFn(data) : !data);
-  
+  const isEmpty = !isLoading && !isError && (!data || (Array.isArray(data) && data.length === 0) || (isEmptyFn ? isEmptyFn(data) : false));
   return { data, isLoading, isEmpty, isError, error };
 }
