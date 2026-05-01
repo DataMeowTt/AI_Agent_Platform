@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Post } from '@nestjs/common';
+import { Controller, Get, Param, Post, Query, ParseIntPipe, DefaultValuePipe } from '@nestjs/common';
 import { CountriesService } from './countries.service';
 
 @Controller('api/v1/countries')
@@ -23,5 +23,14 @@ export class CountriesController {
   @Get(':code/anomalies')
   async getAnomalies(@Param('code') code: string) {
     return this.countriesService.getCountryAnomalies(code.toUpperCase(), 0.75);
+  }
+
+  @Get(':code/cluster-benchmark')
+  async getClusterBenchmark(
+    @Param('code') code: string,
+    @Query('indicator') indicator: string,
+    @Query('year', new DefaultValuePipe(null), ParseIntPipe) year: number | null
+  ) {
+    return this.countriesService.getClusterBenchmark(code.toUpperCase(), indicator, year);
   }
 }
