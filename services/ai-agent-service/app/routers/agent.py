@@ -1,7 +1,28 @@
+from typing import Literal
+
 from fastapi import APIRouter, Depends
 
+from app.composer.chart_composer import (
+    build_anomaly_bar_chart_data,
+    build_compare_line_chart_data,
+    build_ranking_bar_chart_data,
+    build_series_line_chart_data,
+)
+from app.composer.gemini_composer import compose_gemini_answer, should_use_gemini
+from app.composer.template_composer import (
+    compose_anomaly_answer,
+    compose_compare_answer,
+    compose_coverage_answer,
+    compose_fallback_answer,
+    compose_need_clarification_answer,
+    compose_off_topic_answer,
+    compose_ranking_answer,
+    compose_trend_answer,
+    compose_unsupported_answer,
+)
 from app.core.security import verify_internal_api_key
 from app.executor.tool_executor import execute_query_plan
+from app.planner.plan_schema import QueryPlan
 from app.planner.query_planner import create_query_plan
 from app.resolver.slot_resolver import resolve_slots, resolved_slots_to_metadata
 from app.router.rule_router import classify_question
@@ -13,6 +34,9 @@ from app.schemas.chat import (
 )
 
 
+MetadataSource = Literal["template", "gemini", "mock"]
+
+
 router = APIRouter(
     prefix="/agent",
     tags=["agent"],
@@ -20,40 +44,9 @@ router = APIRouter(
 )
 
 
-def build_compare_line_chart_data(rows: list[dict]) -> list[dict]:
-    by_year: dict[int, dict] = {}
-
-    for row in rows:
-        year = row.get("year")
-        country_code = row.get("country_code")
-        value = row.get("value")
-
-        if year is None or country_code is None:
-            continue
-
-        if year not in by_year:
-            by_year[year] = {"year": year}
-
-        by_year[year][country_code] = value
-
-    return [by_year[year] for year in sorted(by_year.keys())]
-
-
-def build_series_line_chart_data(rows: list[dict]) -> list[dict]:
-    return [
-        {
-            "year": row.get("year"),
-            "value": row.get("value"),
-            "country_code": row.get("country_code"),
-            "country": row.get("country"),
-        }
-        for row in rows
-    ]
-
-
 def make_metadata(
     metadata: dict,
-    source: str,
+    source: MetadataSource,
     tools_used: list[str],
 ) -> AiAgentMetadata:
     return AiAgentMetadata(
@@ -66,6 +59,40 @@ def make_metadata(
         years=metadata["years"],
         resolved=metadata["resolved"],
     )
+
+
+def plan_to_dict(plan: QueryPlan) -> dict:
+    return {
+        "question_type": plan.question_type,
+        "tool_name": plan.tool_name,
+        "arguments": plan.arguments,
+        "warnings": plan.warnings,
+    }
+
+
+def maybe_gemini_answer(
+    user_message: str,
+    question_type: str,
+    indicator_code: str | None,
+    result_payload: dict,
+    template_answer: str,
+    row_count: int,
+) -> tuple[str, MetadataSource]:
+    if not should_use_gemini(question_type, row_count):
+        return template_answer, "template"
+
+    answer = compose_gemini_answer(
+        user_message=user_message,
+        question_type=question_type,
+        indicator_code=indicator_code,
+        result_payload=result_payload,
+        template_answer=template_answer,
+    )
+
+    if answer == template_answer:
+        return answer, "template"
+
+    return answer, "gemini"
 
 
 @router.post("/chat", response_model=AiChatResponse)
@@ -86,17 +113,22 @@ def chat(payload: AiChatRequest) -> AiChatResponse:
         "query_planner",
     ]
 
+    indicator_code = metadata["indicators"][0] if metadata["indicators"] else None
+    country_codes = metadata["countries"]
+    start_year = metadata["resolved"].get("start_year")
+    end_year = metadata["resolved"].get("end_year")
+
     if question_type == "OFF_TOPIC":
         return AiChatResponse(
-            answer=(
-                "Câu hỏi này nằm ngoài phạm vi dữ liệu government/economic/social indicators. "
-                "Bạn có thể hỏi về GDP, nợ công, lạm phát, thất nghiệp, nghèo đói, khủng hoảng, dân số, đô thị hóa..."
-            ),
+            answer=compose_off_topic_answer(),
             questionType="OFF_TOPIC",
             data=[
                 {
                     "message": normalized_message,
+                    "conversationId": payload.conversationId,
+                    "context": payload.context,
                     "resolved": metadata["resolved"],
+                    "plan": plan_to_dict(plan),
                 }
             ],
             chart=AiAgentChartConfig(type="none"),
@@ -108,7 +140,7 @@ def chat(payload: AiChatRequest) -> AiChatResponse:
         clarification_questions = plan.warnings or slots.clarification_questions
 
         return AiChatResponse(
-            answer="Mình cần bạn làm rõ thêm: " + " ".join(clarification_questions),
+            answer=compose_need_clarification_answer(clarification_questions),
             questionType="NEED_CLARIFICATION",
             data=[
                 {
@@ -116,6 +148,7 @@ def chat(payload: AiChatRequest) -> AiChatResponse:
                     "conversationId": payload.conversationId,
                     "context": payload.context,
                     "resolved": metadata["resolved"],
+                    "plan": plan_to_dict(plan),
                 }
             ],
             chart=AiAgentChartConfig(type="none"),
@@ -123,19 +156,18 @@ def chat(payload: AiChatRequest) -> AiChatResponse:
             metadata=make_metadata(metadata, "template", base_tools),
         )
 
+    
     if plan.question_type == "UNSUPPORTED_DATA_QUERY":
         return AiChatResponse(
-            answer="Loại câu hỏi này chưa được hỗ trợ ở phase hiện tại.",
+            answer=compose_unsupported_answer(plan.warnings),
             questionType="UNSUPPORTED_DATA_QUERY",
             data=[
                 {
                     "message": normalized_message,
+                    "conversationId": payload.conversationId,
+                    "context": payload.context,
                     "resolved": metadata["resolved"],
-                    "plan": {
-                        "question_type": plan.question_type,
-                        "tool_name": plan.tool_name,
-                        "arguments": plan.arguments,
-                    },
+                    "plan": plan_to_dict(plan),
                 }
             ],
             chart=AiAgentChartConfig(type="none"),
@@ -143,31 +175,68 @@ def chat(payload: AiChatRequest) -> AiChatResponse:
             metadata=make_metadata(metadata, "template", base_tools),
         )
 
-    executed = execute_query_plan(plan)
+    try:
+        executed = execute_query_plan(plan)
+    except Exception as error:
+        return AiChatResponse(
+            answer=compose_unsupported_answer(
+                [
+                    "Có lỗi khi chạy DB tool.",
+                    str(error),
+                ]
+            ),
+            questionType="UNSUPPORTED_DATA_QUERY",
+            data=[
+                {
+                    "message": normalized_message,
+                    "conversationId": payload.conversationId,
+                    "context": payload.context,
+                    "resolved": metadata["resolved"],
+                    "plan": plan_to_dict(plan),
+                    "error": str(error),
+                }
+            ],
+            chart=AiAgentChartConfig(type="none"),
+            warnings=[
+                "Tool execution failed.",
+                str(error),
+            ],
+            metadata=make_metadata(metadata, "template", base_tools),
+        )
+
     result = executed["result"]
     tool_name = executed["tool"]
-
     tools_used = [*base_tools, tool_name]
 
-    indicator_code = metadata["indicators"][0] if metadata["indicators"] else None
-    country_codes = metadata["countries"]
-    start_year = metadata["resolved"].get("start_year")
-    end_year = metadata["resolved"].get("end_year")
-
+    
     if plan.question_type == "VALID_COMPARE_QUERY":
         rows = result["rows"]
         coverage = result["coverage"]
         chart_data = build_compare_line_chart_data(rows)
 
-        answer = (
-            f"Đã so sánh dữ liệu thật cho chỉ số {indicator_code} "
-            f"của {', '.join(country_codes)}"
+        template_answer = compose_compare_answer(
+            indicator_code=indicator_code,
+            country_codes=country_codes,
+            start_year=start_year,
+            end_year=end_year,
+            rows=rows,
         )
 
-        if start_year is not None and end_year is not None:
-            answer += f" trong giai đoạn {start_year}-{end_year}"
+        result_payload = {
+            "indicator": indicator_code,
+            "countries": country_codes,
+            "coverage": coverage,
+            "rows": rows,
+        }
 
-        answer += f". Tìm thấy {len(rows)} dòng dữ liệu."
+        answer, source = maybe_gemini_answer(
+            user_message=normalized_message,
+            question_type=plan.question_type,
+            indicator_code=indicator_code,
+            result_payload=result_payload,
+            template_answer=template_answer,
+            row_count=len(rows),
+        )
 
         return AiChatResponse(
             answer=answer,
@@ -178,11 +247,7 @@ def chat(payload: AiChatRequest) -> AiChatResponse:
                     "conversationId": payload.conversationId,
                     "context": payload.context,
                     "resolved": metadata["resolved"],
-                    "plan": {
-                        "question_type": plan.question_type,
-                        "tool_name": plan.tool_name,
-                        "arguments": plan.arguments,
-                    },
+                    "plan": plan_to_dict(plan),
                     "indicator": indicator_code,
                     "countries": country_codes,
                     "coverage": coverage,
@@ -197,15 +262,33 @@ def chat(payload: AiChatRequest) -> AiChatResponse:
                 data=chart_data,
             ),
             warnings=[] if rows else ["Không tìm thấy dữ liệu phù hợp."],
-            metadata=make_metadata(metadata, "template", tools_used),
+            metadata=make_metadata(metadata, source, tools_used),
         )
 
+    
     if plan.question_type == "VALID_RANKING_QUERY":
         rows = result
         year = plan.arguments.get("year")
 
-        answer = (
-            f"Đã xếp hạng top {len(rows)} quốc gia theo chỉ số {indicator_code} năm {year}."
+        template_answer = compose_ranking_answer(
+            indicator_code=indicator_code,
+            year=year,
+            rows=rows,
+        )
+
+        result_payload = {
+            "indicator": indicator_code,
+            "year": year,
+            "rows": rows,
+        }
+
+        answer, source = maybe_gemini_answer(
+            user_message=normalized_message,
+            question_type=plan.question_type,
+            indicator_code=indicator_code,
+            result_payload=result_payload,
+            template_answer=template_answer,
+            row_count=len(rows),
         )
 
         return AiChatResponse(
@@ -217,11 +300,7 @@ def chat(payload: AiChatRequest) -> AiChatResponse:
                     "conversationId": payload.conversationId,
                     "context": payload.context,
                     "resolved": metadata["resolved"],
-                    "plan": {
-                        "question_type": plan.question_type,
-                        "tool_name": plan.tool_name,
-                        "arguments": plan.arguments,
-                    },
+                    "plan": plan_to_dict(plan),
                     "indicator": indicator_code,
                     "year": year,
                     "rows": rows,
@@ -232,16 +311,34 @@ def chat(payload: AiChatRequest) -> AiChatResponse:
                 title=f"Top countries by {indicator_code} in {year}",
                 xKey="country_code",
                 yKeys=["value"],
-                data=rows,
+                data=build_ranking_bar_chart_data(rows),
             ),
             warnings=[] if rows else ["Không tìm thấy dữ liệu ranking phù hợp."],
-            metadata=make_metadata(metadata, "template", tools_used),
+            metadata=make_metadata(metadata, source, tools_used),
         )
 
+    
     if plan.question_type == "VALID_COVERAGE_QUERY":
         rows = result
 
-        answer = f"Đã kiểm tra coverage dữ liệu cho chỉ số {indicator_code}."
+        template_answer = compose_coverage_answer(
+            indicator_code=indicator_code,
+            rows=rows,
+        )
+
+        result_payload = {
+            "indicator": indicator_code,
+            "rows": rows,
+        }
+
+        answer, source = maybe_gemini_answer(
+            user_message=normalized_message,
+            question_type=plan.question_type,
+            indicator_code=indicator_code,
+            result_payload=result_payload,
+            template_answer=template_answer,
+            row_count=len(rows),
+        )
 
         return AiChatResponse(
             answer=answer,
@@ -252,11 +349,7 @@ def chat(payload: AiChatRequest) -> AiChatResponse:
                     "conversationId": payload.conversationId,
                     "context": payload.context,
                     "resolved": metadata["resolved"],
-                    "plan": {
-                        "question_type": plan.question_type,
-                        "tool_name": plan.tool_name,
-                        "arguments": plan.arguments,
-                    },
+                    "plan": plan_to_dict(plan),
                     "indicator": indicator_code,
                     "rows": rows,
                 }
@@ -269,20 +362,38 @@ def chat(payload: AiChatRequest) -> AiChatResponse:
                 data=rows,
             ),
             warnings=[] if rows else ["Không tìm thấy coverage phù hợp."],
-            metadata=make_metadata(metadata, "template", tools_used),
+            metadata=make_metadata(metadata, source, tools_used),
         )
+
+    
     if plan.question_type == "VALID_ANOMALY_QUERY":
         rows = result
+        threshold = plan.arguments.get("threshold", 0.75)
 
-        answer = f"Đã kiểm tra bất thường cho chỉ số {indicator_code}"
+        template_answer = compose_anomaly_answer(
+            indicator_code=indicator_code,
+            country_codes=country_codes,
+            start_year=start_year,
+            end_year=end_year,
+            rows=rows,
+            threshold=threshold,
+        )
 
-        if country_codes:
-            answer += f" của {', '.join(country_codes)}"
+        result_payload = {
+            "indicator": indicator_code,
+            "countries": country_codes,
+            "threshold": threshold,
+            "rows": rows,
+        }
 
-        if start_year is not None and end_year is not None:
-            answer += f" trong giai đoạn {start_year}-{end_year}"
-
-        answer += f". Tìm thấy {len(rows)} điểm bất thường với ngưỡng anomaly_score >= 0.75."
+        answer, source = maybe_gemini_answer(
+            user_message=normalized_message,
+            question_type=plan.question_type,
+            indicator_code=indicator_code,
+            result_payload=result_payload,
+            template_answer=template_answer,
+            row_count=len(rows),
+        )
 
         return AiChatResponse(
             answer=answer,
@@ -293,13 +404,10 @@ def chat(payload: AiChatRequest) -> AiChatResponse:
                     "conversationId": payload.conversationId,
                     "context": payload.context,
                     "resolved": metadata["resolved"],
-                    "plan": {
-                        "question_type": plan.question_type,
-                        "tool_name": plan.tool_name,
-                        "arguments": plan.arguments,
-                    },
+                    "plan": plan_to_dict(plan),
                     "indicator": indicator_code,
                     "countries": country_codes,
+                    "threshold": threshold,
                     "rows": rows,
                 }
             ],
@@ -308,11 +416,13 @@ def chat(payload: AiChatRequest) -> AiChatResponse:
                 title=f"Anomalies for {indicator_code}",
                 xKey="year",
                 yKeys=["anomaly_score"],
-                data=rows,
+                data=build_anomaly_bar_chart_data(rows),
             ),
             warnings=[] if rows else ["Không tìm thấy điểm bất thường phù hợp."],
-            metadata=make_metadata(metadata, "template", tools_used),
+            metadata=make_metadata(metadata, source, tools_used),
         )
+
+    
     if plan.question_type == "VALID_TREND_QUERY":
         rows = result
 
@@ -327,18 +437,30 @@ def chat(payload: AiChatRequest) -> AiChatResponse:
             y_keys = ["value"]
             chart_title = f"{indicator_code} trend"
 
-        answer = f"Đã lấy chuỗi thời gian cho chỉ số {indicator_code}"
+        template_answer = compose_trend_answer(
+            indicator_code=indicator_code,
+            country_codes=country_codes,
+            start_year=start_year,
+            end_year=end_year,
+            rows=rows,
+            is_analytics_series=is_analytics_series,
+        )
 
-        if country_codes:
-            answer += f" của {', '.join(country_codes)}"
+        result_payload = {
+            "indicator": indicator_code,
+            "countries": country_codes,
+            "is_analytics_series": is_analytics_series,
+            "rows": rows,
+        }
 
-        if start_year is not None and end_year is not None:
-            answer += f" trong giai đoạn {start_year}-{end_year}"
-
-        if is_analytics_series:
-            answer += f". Tìm thấy {len(rows)} dòng dữ liệu analytics gồm actual, trend, residual và anomaly_score."
-        else:
-            answer += f". Tìm thấy {len(rows)} dòng dữ liệu raw."
+        answer, source = maybe_gemini_answer(
+            user_message=normalized_message,
+            question_type=plan.question_type,
+            indicator_code=indicator_code,
+            result_payload=result_payload,
+            template_answer=template_answer,
+            row_count=len(rows),
+        )
 
         return AiChatResponse(
             answer=answer,
@@ -349,13 +471,10 @@ def chat(payload: AiChatRequest) -> AiChatResponse:
                     "conversationId": payload.conversationId,
                     "context": payload.context,
                     "resolved": metadata["resolved"],
-                    "plan": {
-                        "question_type": plan.question_type,
-                        "tool_name": plan.tool_name,
-                        "arguments": plan.arguments,
-                    },
+                    "plan": plan_to_dict(plan),
                     "indicator": indicator_code,
                     "countries": country_codes,
+                    "is_analytics_series": is_analytics_series,
                     "rows": rows,
                 }
             ],
@@ -367,21 +486,25 @@ def chat(payload: AiChatRequest) -> AiChatResponse:
                 data=chart_data,
             ),
             warnings=[] if rows else ["Không tìm thấy dữ liệu chuỗi thời gian phù hợp."],
-            metadata=make_metadata(metadata, "template", tools_used),
+            metadata=make_metadata(metadata, source, tools_used),
         )
 
+    
     return AiChatResponse(
-        answer="Planner đã tạo plan nhưng agent chưa biết compose response cho loại này.",
+        answer=compose_fallback_answer(
+            {
+                "question_type": plan.question_type,
+                "tool_name": plan.tool_name,
+            }
+        ),
         questionType="UNSUPPORTED_DATA_QUERY",
         data=[
             {
                 "message": normalized_message,
+                "conversationId": payload.conversationId,
+                "context": payload.context,
                 "resolved": metadata["resolved"],
-                "plan": {
-                    "question_type": plan.question_type,
-                    "tool_name": plan.tool_name,
-                    "arguments": plan.arguments,
-                },
+                "plan": plan_to_dict(plan),
             }
         ],
         chart=AiAgentChartConfig(type="none"),
