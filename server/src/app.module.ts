@@ -4,7 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { CountriesModule } from './countries/countries.module';
 import { IndicatorsModule } from './indicators/indicators.module';
 import { AnalyticsModule } from './analytics/analytics.module';
-
+import { AiChatModule } from './ai-chat/ai-chat.module';
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -29,6 +29,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
     CountriesModule,
     IndicatorsModule,
     AnalyticsModule,
+    AiChatModule
   ],
   controllers: [],
   providers: [],
