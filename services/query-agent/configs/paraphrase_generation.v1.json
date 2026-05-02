@@ -1,0 +1,42 @@
+{
+  "version": "v1",
+  "target_generation_bucket": "llm_paraphrase",
+  "target_samples": 7446,
+  "manual_platforms": ["deepseek", "qwen", "chatgpt", "other"],
+  "batching": {
+    "plans_per_batch": 20,
+    "variants_per_plan": 3,
+    "max_prompt_chars": 12000
+  },
+  "language_mix": {
+    "vi": 0.35,
+    "vi_no_diacritics": 0.15,
+    "en": 0.25,
+    "mixed_vi_en": 0.15,
+    "short_chat": 0.1
+  },
+  "paraphrase_rules": {
+    "preserve_meaning": true,
+    "do_not_change_indicator": true,
+    "do_not_change_country": true,
+    "do_not_change_year": true,
+    "do_not_change_intent": true,
+    "do_not_add_new_constraints": true,
+    "do_not_remove_required_constraints": true,
+    "output_json_only": true
+  },
+  "validation_policy": {
+    "require_json_array": true,
+    "max_variants_per_plan": 5,
+    "min_variants_per_plan": 1,
+    "drop_if_contains_unrendered_placeholder": true,
+    "drop_if_mojibake": true,
+    "drop_if_duplicate_global": true,
+    "drop_if_too_long_chars": 500,
+    "drop_if_missing_required_surface_terms": false
+  },
+  "fallback_policy": {
+    "allow_fill_missing_with_deterministic_variants": true,
+    "max_fill_ratio": 0.15
+  }
+}
