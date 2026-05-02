@@ -271,10 +271,61 @@ def chat(payload: AiChatRequest) -> AiChatResponse:
             warnings=[] if rows else ["Không tìm thấy coverage phù hợp."],
             metadata=make_metadata(metadata, "template", tools_used),
         )
+    if plan.question_type == "VALID_ANOMALY_QUERY":
+        rows = result
 
+        answer = f"Đã kiểm tra bất thường cho chỉ số {indicator_code}"
+
+        if country_codes:
+            answer += f" của {', '.join(country_codes)}"
+
+        if start_year is not None and end_year is not None:
+            answer += f" trong giai đoạn {start_year}-{end_year}"
+
+        answer += f". Tìm thấy {len(rows)} điểm bất thường với ngưỡng anomaly_score >= 0.75."
+
+        return AiChatResponse(
+            answer=answer,
+            questionType="VALID_ANOMALY_QUERY",
+            data=[
+                {
+                    "message": normalized_message,
+                    "conversationId": payload.conversationId,
+                    "context": payload.context,
+                    "resolved": metadata["resolved"],
+                    "plan": {
+                        "question_type": plan.question_type,
+                        "tool_name": plan.tool_name,
+                        "arguments": plan.arguments,
+                    },
+                    "indicator": indicator_code,
+                    "countries": country_codes,
+                    "rows": rows,
+                }
+            ],
+            chart=AiAgentChartConfig(
+                type="bar" if rows else "none",
+                title=f"Anomalies for {indicator_code}",
+                xKey="year",
+                yKeys=["anomaly_score"],
+                data=rows,
+            ),
+            warnings=[] if rows else ["Không tìm thấy điểm bất thường phù hợp."],
+            metadata=make_metadata(metadata, "template", tools_used),
+        )
     if plan.question_type == "VALID_TREND_QUERY":
         rows = result
-        chart_data = build_series_line_chart_data(rows)
+
+        is_analytics_series = plan.tool_name == "get_indicator_analytics_series"
+
+        if is_analytics_series:
+            chart_data = rows
+            y_keys = ["actual_value", "trend_value"]
+            chart_title = f"{indicator_code} actual vs trend"
+        else:
+            chart_data = build_series_line_chart_data(rows)
+            y_keys = ["value"]
+            chart_title = f"{indicator_code} trend"
 
         answer = f"Đã lấy chuỗi thời gian cho chỉ số {indicator_code}"
 
@@ -284,7 +335,10 @@ def chat(payload: AiChatRequest) -> AiChatResponse:
         if start_year is not None and end_year is not None:
             answer += f" trong giai đoạn {start_year}-{end_year}"
 
-        answer += f". Tìm thấy {len(rows)} dòng dữ liệu."
+        if is_analytics_series:
+            answer += f". Tìm thấy {len(rows)} dòng dữ liệu analytics gồm actual, trend, residual và anomaly_score."
+        else:
+            answer += f". Tìm thấy {len(rows)} dòng dữ liệu raw."
 
         return AiChatResponse(
             answer=answer,
@@ -307,9 +361,9 @@ def chat(payload: AiChatRequest) -> AiChatResponse:
             ],
             chart=AiAgentChartConfig(
                 type="line" if rows else "none",
-                title=f"{indicator_code} trend",
+                title=chart_title,
                 xKey="year",
-                yKeys=["value"],
+                yKeys=y_keys,
                 data=chart_data,
             ),
             warnings=[] if rows else ["Không tìm thấy dữ liệu chuỗi thời gian phù hợp."],

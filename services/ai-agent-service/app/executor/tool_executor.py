@@ -1,6 +1,8 @@
 from typing import Any
 
 from app.planner.plan_schema import QueryPlan
+from app.tools.analytics_series_tool import get_indicator_analytics_series
+from app.tools.anomaly_tool import get_indicator_anomalies
 from app.tools.compare_tool import compare_countries
 from app.tools.coverage_tool import get_data_coverage
 from app.tools.indicator_series_tool import get_indicator_series
@@ -37,5 +39,15 @@ def execute_query_plan(plan: QueryPlan) -> dict[str, Any]:
             "tool": plan.tool_name,
             "result": get_indicator_series(**plan.arguments),
         }
+    if plan.tool_name == "get_indicator_analytics_series":
+        return {
+            "tool": plan.tool_name,
+            "result": get_indicator_analytics_series(**plan.arguments),
+        }
 
+    if plan.tool_name == "get_indicator_anomalies":
+        return {
+            "tool": plan.tool_name,
+            "result": get_indicator_anomalies(**plan.arguments),
+        }
     raise ValueError(f"Unsupported tool_name: {plan.tool_name}")

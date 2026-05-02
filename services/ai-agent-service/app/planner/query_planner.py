@@ -1,6 +1,6 @@
 from app.planner.plan_schema import QueryPlan
 from app.resolver.slot_resolver import ResolvedSlots
-
+from app.catalog.analytics_catalog import indicator_has_analytics
 
 def create_query_plan(question_type: str, slots: ResolvedSlots) -> QueryPlan:
     indicator_code = slots.indicators[0]["code"] if slots.indicators else None
@@ -81,6 +81,18 @@ def create_query_plan(question_type: str, slots: ResolvedSlots) -> QueryPlan:
         )
 
     if question_type == "VALID_TREND_QUERY":
+        if indicator_has_analytics(indicator_code):
+            return QueryPlan(
+                question_type=question_type,
+                tool_name="get_indicator_analytics_series",
+                arguments={
+                    "indicator_code": indicator_code,
+                    "country_codes": country_codes,
+                    "start_year": start_year,
+                    "end_year": end_year,
+                },
+            )
+
         return QueryPlan(
             question_type=question_type,
             tool_name="get_indicator_series",
@@ -90,23 +102,31 @@ def create_query_plan(question_type: str, slots: ResolvedSlots) -> QueryPlan:
                 "start_year": start_year,
                 "end_year": end_year,
             },
-        )
-
-    if question_type == "VALID_ANOMALY_QUERY":
-        return QueryPlan(
-            question_type="UNSUPPORTED_DATA_QUERY",
-            tool_name="none",
-            arguments={},
             warnings=[
-                "Phase 5 hiện chưa bật anomaly_tool. Sẽ thêm ở phase tiếp theo.",
+                "Indicator này chưa có analytics trend, dùng raw time series thay thế.",
             ],
         )
 
-    return QueryPlan(
-        question_type="UNSUPPORTED_DATA_QUERY",
-        tool_name="none",
-        arguments={},
-        warnings=[
-            f"Chưa hỗ trợ question_type={question_type}",
-        ],
-    )
+    if question_type == "VALID_ANOMALY_QUERY":
+        if not indicator_has_analytics(indicator_code):
+            return QueryPlan(
+                question_type="UNSUPPORTED_DATA_QUERY",
+                tool_name="none",
+                arguments={},
+                warnings=[
+                    f"Indicator {indicator_code} chưa có analytics/anomaly score.",
+                ],
+            )
+
+        return QueryPlan(
+            question_type=question_type,
+            tool_name="get_indicator_anomalies",
+            arguments={
+                "indicator_code": indicator_code,
+                "country_codes": country_codes,
+                "threshold": 0.75,
+                "start_year": start_year,
+                "end_year": end_year,
+                "limit": 50,
+            },
+        )
