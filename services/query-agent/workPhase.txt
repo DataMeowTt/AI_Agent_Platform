@@ -1,0 +1,10 @@
+Phase 1: Chốt data contract
+Phase 2: Chốt intent + question_family coverage
+Phase 3: Chuẩn hóa indicator/country alias catalog
+Phase 4: Thiết kế template sinh câu hỏi
+Phase 5: Sinh base ParsedQuery plans bằng code
+Phase 6: Sinh câu hỏi deterministic từ template
+Phase 7: Dùng DeepSeek/Qwen paraphrase
+Phase 8: Validate + deduplicate + quality check
+Phase 9: Split train/val/test
+Phase 10: Tạo report dataset trước khi fine-tune
