@@ -18,6 +18,7 @@ SCAN_FILES = [
     REPO_ROOT / "server/src/indicators/indicators.service.ts",
     QUERY_AGENT_DIR / "datasets/parser/parser_hard_cases.v1.jsonl",
     QUERY_AGENT_DIR / "datasets/parser/parser_offtopic_unsupported.v1.jsonl",
+    QUERY_AGENT_DIR / "datasets/parser/parser_full.v1.jsonl",
 ]
 
 MOJIBAKE_LITERALS = [
