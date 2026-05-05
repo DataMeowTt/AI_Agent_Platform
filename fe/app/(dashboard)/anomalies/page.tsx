@@ -6,10 +6,18 @@ import AnomaliesTable from '@/components/tables/AnomaliesTable';
 import Pagination from '@/components/ui/Pagination';
 import { TableSkeleton } from '@/components/ui/Skeletons';
 import { Search, Filter } from 'lucide-react';
-import { useMemo, useState, useEffect, useRef } from 'react';
+import { Suspense, useMemo, useState, useEffect, useRef } from 'react';
 import { Country } from '@/lib/types';
 
 export default function AnomaliesPage() {
+  return (
+    <Suspense fallback={<TableSkeleton rows={5} />}>
+      <AnomaliesPageContent />
+    </Suspense>
+  );
+}
+
+function AnomaliesPageContent() {
   const [country, setCountry] = useUrlState<string>('country', '');
   const [rawThreshold, setRawThreshold] = useUrlState<number>('threshold', 0.75);
   const [page, setPage] = useUrlState<number>('page', 1);

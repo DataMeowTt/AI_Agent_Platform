@@ -4,7 +4,7 @@ import { useClusters } from '@/lib/hooks/useClusters';
 import { useDataState } from '@/lib/hooks/useDataState';
 import dynamic from 'next/dynamic';
 import { ChartSkeleton, CardSkeleton } from '@/components/ui/Skeletons';
-import { useMemo } from 'react';
+import { Suspense, useMemo } from 'react';
 import { Layers, ArrowUpRight, AlertCircle } from 'lucide-react';
 import Link from 'next/link';
 
@@ -14,6 +14,14 @@ const ClusterPieChart = dynamic(() => import('@/components/charts/PieChart'), {
 });
 
 export default function ClustersPage() {
+  return (
+    <Suspense fallback={<CardSkeleton className="h-64" />}>
+      <ClustersPageContent />
+    </Suspense>
+  );
+}
+
+function ClustersPageContent() {
   const [year, setYear] = useUrlState<number>('year', 2022);
   const { data: clusters, isLoading, isEmpty, isError, error } = useDataState(useClusters(year));
 

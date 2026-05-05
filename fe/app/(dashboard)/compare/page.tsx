@@ -6,7 +6,7 @@ import { useCompare } from '@/lib/hooks/useCompare';
 import { useIndicators } from '@/lib/hooks/useIndicators';
 import { useCountries } from '@/lib/hooks/useCountries';
 import { ChartSkeleton, TableSkeleton } from '@/components/ui/Skeletons';
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { Suspense, useState, useMemo, useEffect, useRef } from 'react';
 import { Search, X, Calendar, BarChart3, Table2, AlertCircle, ArrowDownToLine, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
@@ -14,6 +14,14 @@ import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tool
 const CHART_COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#64748b'];
 
 export default function ComparePage() {
+  return (
+    <Suspense fallback={<TableSkeleton rows={5} />}>
+      <ComparePageContent />
+    </Suspense>
+  );
+}
+
+function ComparePageContent() {
   const [rawCountries, setRawCountries] = useUrlState<string[]>('countries', []);
   const [selectedIndicator, setSelectedIndicator] = useUrlState<string>('indicator', 'rGDP_growth_YoY');
   const [yearFrom, setYearFrom] = useUrlState<number>('from', 2000);

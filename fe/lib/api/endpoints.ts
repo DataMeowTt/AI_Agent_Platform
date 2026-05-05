@@ -1,4 +1,5 @@
 import apiClient from './client';
+import type { AiChatRequest } from '@/lib/types/aiChat';
 
 export const countriesApi = {
   getAll: () => apiClient.get('/api/v1/countries'),
@@ -16,4 +17,12 @@ export const analyticsApi = {
   getClusters: (year: number) => apiClient.get(`/api/v1/analytics/clusters?year=${year}`),
   getAnomalies: (params?: { country?: string; indicator?: string; threshold?: number; limit?: number; offset?: number }) =>
     apiClient.get('/api/v1/analytics/anomalies', { params }),
+};
+
+export const aiChatApi = {
+  sendMessage: (payload: AiChatRequest) =>
+    apiClient.post('/api/v1/ai/chat', payload, {
+      timeout: 120000,
+    }),
+  health: () => apiClient.get('/api/v1/ai/health'),
 };

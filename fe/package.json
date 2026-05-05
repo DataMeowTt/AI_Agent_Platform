@@ -28,6 +28,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "autoprefixer": "^10.5.0",
+    "es-abstract": "^1.23.3",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
     "postcss": "^8.5.12",
