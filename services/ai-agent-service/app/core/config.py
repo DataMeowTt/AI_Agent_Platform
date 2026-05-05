@@ -15,7 +15,13 @@ class Settings(BaseSettings):
 
     enable_gemini: bool = False
     gemini_api_key: str | None = None
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-3.1-flash-lite-preview"
+    gemini_router_enabled: bool = True
+    gemini_router_model: str = "gemini-3.1-flash-lite-preview"
+    gemini_router_timeout_ms: int = 10000
+    gemini_router_retries: int = 1
+    gemini_router_retry_backoff_ms: int = 700
+    conversation_context_max_rows: int = 20
 
     parser_service_base_url: str | None = None
     parser_service_timeout_ms: int = 30000

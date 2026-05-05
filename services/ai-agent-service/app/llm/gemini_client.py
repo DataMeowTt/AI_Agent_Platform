@@ -11,7 +11,7 @@ def is_gemini_enabled() -> bool:
     return bool(settings.enable_gemini and settings.gemini_api_key)
 
 
-def generate_gemini_text(prompt: str) -> str:
+def generate_gemini_text(prompt: str, model: str | None = None) -> str:
     if not is_gemini_enabled():
         raise GeminiClientError("Gemini is disabled or GEMINI_API_KEY is missing")
 
@@ -19,7 +19,7 @@ def generate_gemini_text(prompt: str) -> str:
         client = genai.Client(api_key=settings.gemini_api_key)
 
         response = client.models.generate_content(
-            model=settings.gemini_model,
+            model=model or settings.gemini_model,
             contents=prompt,
         )
 

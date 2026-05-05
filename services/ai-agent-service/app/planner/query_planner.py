@@ -16,6 +16,14 @@ def create_query_plan(question_type: str, slots: ResolvedSlots) -> QueryPlan:
             arguments={},
         )
 
+    if question_type in {"UNSUPPORTED", "UNSUPPORTED_DATA_QUERY"}:
+        return QueryPlan(
+            question_type=question_type,
+            tool_name="none",
+            arguments={},
+            warnings=["Yêu cầu này hiện chưa được hỗ trợ."],
+        )
+
     if question_type == "NEED_CLARIFICATION":
         return QueryPlan(
             question_type=question_type,
@@ -130,3 +138,10 @@ def create_query_plan(question_type: str, slots: ResolvedSlots) -> QueryPlan:
                 "limit": 50,
             },
         )
+
+    return QueryPlan(
+        question_type="UNSUPPORTED_DATA_QUERY",
+        tool_name="none",
+        arguments={},
+        warnings=[f"Planner chưa hỗ trợ question_type={question_type}."],
+    )

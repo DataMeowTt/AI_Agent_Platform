@@ -72,8 +72,9 @@ def create_plan_from_model_parsed(parsed_query: dict[str, Any]) -> QueryPlan:
 
     if plan.question_type == "VALID_RANKING_QUERY":
         arguments = dict(plan.arguments)
-        if parsed_query.get("limit") is not None:
-            arguments["limit"] = parsed_query["limit"]
+        limit = _int_or_none(parsed_query.get("limit"))
+        if limit is not None:
+            arguments["limit"] = limit
         if parsed_query.get("ranking_order") in {"asc", "desc"}:
             arguments["order"] = parsed_query["ranking_order"]
         return QueryPlan(
@@ -85,10 +86,12 @@ def create_plan_from_model_parsed(parsed_query: dict[str, Any]) -> QueryPlan:
 
     if plan.question_type == "VALID_ANOMALY_QUERY":
         arguments = dict(plan.arguments)
-        if parsed_query.get("threshold") is not None:
-            arguments["threshold"] = parsed_query["threshold"]
-        if parsed_query.get("limit") is not None:
-            arguments["limit"] = parsed_query["limit"]
+        threshold = _float_or_none(parsed_query.get("threshold"))
+        limit = _int_or_none(parsed_query.get("limit"))
+        if threshold is not None:
+            arguments["threshold"] = threshold
+        if limit is not None:
+            arguments["limit"] = limit
         return QueryPlan(
             question_type=plan.question_type,
             tool_name=plan.tool_name,
@@ -122,3 +125,21 @@ def _country_to_slot(code: str) -> dict[str, Any] | None:
     data = asdict(country)
     data["matched_alias"] = country.code
     return data
+
+
+def _int_or_none(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None

@@ -49,6 +49,7 @@ def parse_with_hybrid_parser(
             parser_response=parser_response,
         )
 
+    parsed_query = _cleanup_parsed_query(parsed_query, parser_response)
     intent = parsed_query.get("intent")
     parser_debug = _model_parser_debug(parser_response)
 
@@ -157,6 +158,34 @@ def _model_parser_debug(parser_response: dict[str, Any]) -> dict[str, Any]:
         "latency_ms": parser_response.get("latency_ms"),
         "inference_mode": parser_response.get("inference_mode"),
     }
+
+
+def _cleanup_parsed_query(
+    parsed_query: dict[str, Any],
+    parser_response: dict[str, Any],
+) -> dict[str, Any]:
+    cleaned = dict(parsed_query)
+    if cleaned.get("intent") != "NEED_CLARIFICATION":
+        return cleaned
+
+    candidates = parser_response.get("candidates") or {}
+    detected_years = candidates.get("detected_years") if isinstance(candidates, dict) else None
+    fallback_reason = str(parser_response.get("fallback_reason") or "")
+
+    should_clear_years = (
+        detected_years == []
+        or detected_years is None
+        and any(
+            reason in fallback_reason
+            for reason in ("missing_indicator", "missing_time", "need_clarification")
+        )
+    )
+
+    if should_clear_years:
+        cleaned["start_year"] = None
+        cleaned["end_year"] = None
+
+    return cleaned
 
 
 def _can_use_model_parser(

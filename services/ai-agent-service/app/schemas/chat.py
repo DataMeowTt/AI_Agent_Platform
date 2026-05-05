@@ -59,6 +59,7 @@ class AiChatResponse(BaseModel):
     chart: AiAgentChartConfig = Field(default_factory=AiAgentChartConfig)
     parsedQuery: dict[str, Any] | None = None
     parserDebug: dict[str, Any] | None = None
+    routerDebug: dict[str, Any] | None = None
     clarificationQuestions: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     metadata: AiAgentMetadata = Field(default_factory=AiAgentMetadata)

@@ -124,12 +124,28 @@ def _contains_country_alias(normalized_text: str, normalized_alias: str) -> bool
     return re.search(rf"(^|\s){re.escape(normalized_alias)}($|\s)", normalized_text) is not None
 
 
+def _contains_iso3_token(raw_text: str, code: str) -> bool:
+    return re.search(rf"(?<![A-Za-z0-9]){re.escape(code)}(?![A-Za-z0-9])", raw_text) is not None
+
+
 def resolve_countries(message: str) -> list[CountryMatch]:
     normalized_message = normalize_text(message)
     matches: list[CountryMatch] = []
 
     for country in COUNTRIES.values():
-        aliases = (country.code, country.name, *country.aliases)
+        if _contains_iso3_token(message, country.code):
+            matches.append(CountryMatch(country=country, matched_alias=country.code))
+            continue
+
+        aliases = sorted(
+            {
+                alias
+                for alias in (country.name, *country.aliases)
+                if alias and alias != country.code
+            },
+            key=lambda item: len(normalize_text(item)),
+            reverse=True,
+        )
 
         for alias in aliases:
             normalized_alias = normalize_text(alias)
