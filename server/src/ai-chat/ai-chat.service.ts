@@ -22,31 +22,29 @@ export class AiChatService {
 
   async chat(payload: AiChatRequestDto): Promise<AiAgentChatResponse> {
     const baseUrl = this.getAgentBaseUrl();
+    const agentUrl = `${baseUrl}/agent/chat`;
 
     try {
       const response = await firstValueFrom(
-        this.httpService.post<AiAgentChatResponse>(
-          `${baseUrl}/agent/chat`,
-          payload,
-          {
-            headers: this.getInternalHeaders(),
-            timeout: this.getTimeoutMs(),
-          },
-        ),
+        this.httpService.post<AiAgentChatResponse>(agentUrl, payload, {
+          headers: this.getInternalHeaders(),
+          timeout: this.getTimeoutMs(),
+        }),
       );
 
       return response.data;
     } catch (error) {
-      this.handleAgentError(error, 'AI Agent chat request failed');
+      this.handleAgentError(error, 'AI Agent chat request failed', agentUrl);
     }
   }
 
   async health(): Promise<AiAgentHealthResponse> {
     const baseUrl = this.getAgentBaseUrl();
+    const agentUrl = `${baseUrl}/health`;
 
     try {
       const response = await firstValueFrom(
-        this.httpService.get<AiAgentHealthResponse>(`${baseUrl}/health`, {
+        this.httpService.get<AiAgentHealthResponse>(agentUrl, {
           headers: this.getInternalHeaders(),
           timeout: 5000,
         }),
@@ -54,7 +52,7 @@ export class AiChatService {
 
       return response.data;
     } catch (error) {
-      this.handleAgentError(error, 'AI Agent health check failed');
+      this.handleAgentError(error, 'AI Agent health check failed', agentUrl);
     }
   }
 
@@ -72,7 +70,9 @@ export class AiChatService {
 
   private getTimeoutMs(): number {
     const timeout = this.configService.get<string>('AI_AGENT_TIMEOUT_MS');
-    return timeout ? Number(timeout) : 30000;
+    const parsed = timeout ? Number(timeout) : 90000;
+
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 90000;
   }
 
   private getInternalHeaders(): Record<string, string> {
@@ -89,7 +89,11 @@ export class AiChatService {
     };
   }
 
-  private handleAgentError(error: unknown, fallbackMessage: string): never {
+  private handleAgentError(
+    error: unknown,
+    fallbackMessage: string,
+    agentUrl: string,
+  ): never {
     const axiosError = error as AxiosError;
 
     if (axiosError.response) {
@@ -97,6 +101,8 @@ export class AiChatService {
         message: fallbackMessage,
         agentStatusCode: axiosError.response.status,
         agentResponse: axiosError.response.data,
+        agentUrl,
+        detail: axiosError.message,
       });
     }
 
@@ -106,13 +112,15 @@ export class AiChatService {
     ) {
       throw new ServiceUnavailableException({
         message: 'AI Agent service timeout',
+        timeoutMs: this.getTimeoutMs(),
         detail: axiosError.message,
       });
     }
 
     throw new ServiceUnavailableException({
-      message: fallbackMessage,
+      message: 'AI Agent service unavailable',
       detail: axiosError.message ?? 'Unknown AI Agent error',
+      code: axiosError.code,
     });
   }
 }
