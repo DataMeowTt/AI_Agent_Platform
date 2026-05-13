@@ -70,7 +70,13 @@ def run_hybrid_v2_pipeline(
             "parserModelDebug": {},
         }
 
-        if rule_draft.route == "FOLLOW_UP_ANALYSIS" and rule_draft.confidence >= 0.9:
+        if (
+            rule_draft.route == "FOLLOW_UP_ANALYSIS"
+            and rule_draft.confidence >= 0.9
+            and rule_draft.uses_previous_context
+            and not rule_draft.needs_db
+            and not rule_draft.needs_parser_agent
+        ):
             return _followup_analysis_response(
                 payload,
                 message,
@@ -86,7 +92,12 @@ def run_hybrid_v2_pipeline(
                     parser_model_debug,
                 ),
             )
-        if rule_draft.route == "NEED_CLARIFICATION" and rule_draft.confidence >= 0.9:
+        if (
+            rule_draft.route == "NEED_CLARIFICATION"
+            and rule_draft.confidence >= 0.9
+            and rule_draft.clarification_questions
+            and not rule_draft.needs_front_llm
+        ):
             return _clarification_response(
                 payload,
                 message,
@@ -305,7 +316,7 @@ def _followup_analysis_response(
     router_debug: dict[str, Any] | None = None,
 ) -> AiChatResponse:
     summary = router_context.get("last_data_summary") or {}
-    answer = _compose_followup_analysis_from_context(router_context)
+    answer = _compose_followup_analysis_from_context(router_context, message)
 
     response = AiChatResponse(
         answer=sanitize_user_facing_text(answer),
@@ -354,7 +365,7 @@ def _followup_analysis_response(
 
     return response
 
-def _compose_followup_analysis_from_context(router_context: dict[str, Any]) -> str:
+def _compose_followup_analysis_from_context(router_context: dict[str, Any], message: str = "") -> str:
     summary = router_context.get("last_data_summary") or {}
     rows = summary.get("top_rows") or router_context.get("last_rows") or []
     question_type = router_context.get("last_question_type")
@@ -364,12 +375,45 @@ def _compose_followup_analysis_from_context(router_context: dict[str, Any]) -> s
 
     row_count = summary.get("row_count")
     period = _context_period_text(summary)
+    normalized_message = normalize_catalog_text(message)
+    asks_reason = any(
+        token in normalized_message
+        for token in (
+            "vi sao",
+            "tai sao",
+            "ly do",
+            "nguyen nhan",
+            "phan tich",
+            "giai thich",
+        )
+    )
+    asks_commonality = any(
+        token in normalized_message
+        for token in (
+            "diem chung",
+            "cac nuoc nay",
+            "nhom nay",
+            "giong nhau",
+            "dac diem chung",
+        )
+    )
+    asks_risk = any(
+        token in normalized_message
+        for token in (
+            "rui ro",
+            "rủi ro",
+            "canh bao",
+            "dang lo",
+            "bat on",
+        )
+    )
+    qualitative_text = _qualitative_followup_text(indicator_code, message)
 
     if not rows:
         detail = f" với {row_count} dòng dữ liệu" if row_count else ""
         return sanitize_user_facing_text(
-            f"Dựa trên {indicator_label}{detail}, có thể nhận xét định tính rằng khác biệt trong kết quả thường phản ánh "
-            "bối cảnh kinh tế, cấu trúc chính sách và chất lượng dữ liệu của từng nước. "
+            f"Dựa trên {indicator_label}{detail}, có thể đưa ra nhận xét định tính. "
+            f"{qualitative_text} "
             "Đây là phân tích định tính, không phải bằng chứng nhân quả trực tiếp."
         )
 
@@ -383,7 +427,7 @@ def _compose_followup_analysis_from_context(router_context: dict[str, Any]) -> s
             return sanitize_user_facing_text(
                 f"Kết quả trước là xếp hạng {indicator_label}{period}. "
                 f"Nhóm đứng {order_text} bắt đầu với {country} ở mức {value}. "
-                "Sự khác biệt giữa các nước có thể phản ánh cấu trúc kinh tế, chính sách và chất lượng dữ liệu khác nhau. "
+                f"{qualitative_text} "
                 "Đây là phân tích định tính, không phải bằng chứng nhân quả trực tiếp."
             )
 
@@ -406,6 +450,7 @@ def _compose_followup_analysis_from_context(router_context: dict[str, Any]) -> s
                 f"Kết quả trước cho thấy {indicator_label} của {country}{period} "
                 f"đi từ {format_value(_context_row_value(first), unit)} năm {first.get('year')} "
                 f"đến {format_value(_context_row_value(last), unit)} năm {last.get('year')}, xu hướng chung là {direction}. "
+                f"{qualitative_text} "
                 "Đây là phân tích định tính, không phải bằng chứng nhân quả trực tiếp."
             )
 
@@ -422,13 +467,116 @@ def _compose_followup_analysis_from_context(router_context: dict[str, Any]) -> s
         return sanitize_user_facing_text(
             f"Kết quả trước cho thấy ở cuối kỳ {year}, {high_country} có {indicator_label} cao hơn "
             f"({high_value}), còn {low_country} thấp hơn ({low_value}) trong nhóm dữ liệu đã hiển thị. "
+            f"{qualitative_text} "
             "Chênh lệch này nên được hiểu như mô tả dữ liệu, không tự động chứng minh nguyên nhân. "
             "Đây là phân tích định tính, không phải bằng chứng nhân quả trực tiếp."
         )
 
     return sanitize_user_facing_text(
-        f"Dựa trên kết quả đã hiển thị cho {indicator_label}{period}, có thể rút ra nhận xét định tính nhưng chưa đủ dữ liệu "
-        "để kết luận nguyên nhân. Đây là phân tích định tính, không phải bằng chứng nhân quả trực tiếp."
+        f"Dựa trên kết quả đã hiển thị cho {indicator_label}{period}, có thể rút ra nhận xét định tính. "
+        f"{qualitative_text} "
+        "Đây là phân tích định tính, không phải bằng chứng nhân quả trực tiếp."
+    )
+
+
+def _qualitative_followup_text(indicator_code: str | None, message: str) -> str:
+    normalized = normalize_catalog_text(message)
+    label = get_indicator_label(indicator_code) if indicator_code else "chỉ số đang xét"
+
+    asks_commonality = any(
+        token in normalized
+        for token in (
+            "diem chung",
+            "cac nuoc nay",
+            "nhom nay",
+            "giong nhau",
+            "dac diem chung",
+        )
+    )
+    asks_risk = any(
+        token in normalized
+        for token in (
+            "rui ro",
+            "canh bao",
+            "dang lo",
+            "bat on",
+        )
+    )
+
+    if asks_commonality:
+        return (
+            f"Điểm chung cần chú ý là các nước trong kết quả đều nổi bật về {label} trong phạm vi dữ liệu đã hiển thị. "
+            "Điều này thường phản ánh một số đặc điểm tương đồng về bối cảnh vĩ mô, cấu trúc kinh tế, chu kỳ tăng trưởng, "
+            "chính sách công hoặc chất lượng dữ liệu, nhưng không nên hiểu là các nước có cùng nguyên nhân."
+        )
+
+    if asks_risk:
+        if indicator_code in {"govdebt_GDP", "debt_change_YoY", "cumulative_deficit_5yr"}:
+            return (
+                "Rủi ro định tính chính là dư địa tài khóa có thể thu hẹp, chi phí vay tăng, áp lực trả nợ lớn hơn "
+                "và khả năng ứng phó với cú sốc kinh tế kém linh hoạt hơn."
+            )
+        if indicator_code in {"inflation_cpi", "inflation_deflator", "inflation_gap", "rolling_3yr_avg_cpi"}:
+            return (
+                "Rủi ro định tính chính là sức mua suy giảm, chi phí sinh hoạt tăng, lãi suất có thể chịu áp lực tăng "
+                "và kỳ vọng lạm phát trở nên khó kiểm soát hơn."
+            )
+        if indicator_code in {"unemployment_total", "unemployment_youth", "youth_unemployment_gap"}:
+            return (
+                "Rủi ro định tính chính là thu nhập hộ gia đình suy yếu, áp lực an sinh tăng, kỹ năng lao động bị lãng phí "
+                "và tăng trưởng dài hạn có thể bị ảnh hưởng."
+            )
+        if indicator_code in {"poverty_headcount", "poverty_change_5yr"}:
+            return (
+                "Rủi ro định tính chính là mức sống dễ bị tổn thương hơn trước cú sốc giá cả, việc làm hoặc suy giảm tăng trưởng, "
+                "đồng thời nhu cầu hỗ trợ an sinh có thể tăng."
+            )
+        return (
+            f"Rủi ro định tính liên quan đến {label} thường nằm ở ổn định vĩ mô, dư địa chính sách, khả năng chống chịu "
+            "trước cú sốc và sự khác biệt về chất lượng dữ liệu giữa các nước."
+        )
+
+    if indicator_code in {"govdebt_GDP", "debt_change_YoY", "cumulative_deficit_5yr"}:
+        return (
+            "Về mặt định tính, nợ công/GDP có thể tăng khi thâm hụt ngân sách kéo dài, tăng trưởng GDP chậm, "
+            "chi phí vay cao hoặc chính phủ phải mở rộng chi tiêu trong giai đoạn khủng hoảng. "
+            "Nó có thể giảm khi tăng trưởng GDP nhanh hơn tốc độ tăng nợ hoặc ngân sách cải thiện."
+        )
+
+    if indicator_code in {"inflation_cpi", "inflation_deflator", "inflation_gap", "rolling_3yr_avg_cpi"}:
+        return (
+            "Về mặt định tính, lạm phát có thể tăng do cú sốc giá hàng hóa, mất giá tiền tệ, chính sách tiền tệ nới lỏng, "
+            "đứt gãy cung ứng hoặc cầu nội địa tăng nhanh. Khi các yếu tố này hạ nhiệt, lạm phát thường giảm dần."
+        )
+
+    if indicator_code in {"unemployment_total", "unemployment_youth", "youth_unemployment_gap"}:
+        return (
+            "Về mặt định tính, thất nghiệp chịu ảnh hưởng bởi chu kỳ kinh tế, tốc độ tạo việc làm, cơ cấu ngành, "
+            "chất lượng kỹ năng lao động và các cú sốc như suy thoái hoặc dịch bệnh."
+        )
+
+    if indicator_code in {"poverty_headcount", "poverty_change_5yr"}:
+        return (
+            "Về mặt định tính, tỷ lệ nghèo thường giảm khi thu nhập và việc làm cải thiện, tăng trưởng lan tỏa tốt hơn, "
+            "giá cả ổn định và chính sách an sinh hiệu quả. Ngược lại, cú sốc giá, thất nghiệp hoặc suy giảm tăng trưởng "
+            "có thể làm nghèo dai dẳng hơn."
+        )
+
+    if indicator_code in {"tax_revenue_pct_GDP", "fiscal_balance_GDP", "govrev_GDP", "govexp_GDP"}:
+        return (
+            "Về mặt định tính, khác biệt tài khóa có thể đến từ năng lực thu ngân sách, cấu trúc thuế, quy mô chi tiêu công, "
+            "chu kỳ kinh tế và mức độ tuân thủ thuế."
+        )
+
+    if indicator_code in {"trade_pct_gdp", "GFCF_to_GDP", "GNI_to_GDP"}:
+        return (
+            f"Về mặt định tính, khác biệt về {label} thường phản ánh độ mở nền kinh tế, cấu trúc sản xuất, dòng vốn, "
+            "thương mại quốc tế và chính sách phát triển của từng nước."
+        )
+
+    return (
+        f"Về mặt định tính, khác biệt về {label} thường phản ánh bối cảnh kinh tế, cấu trúc chính sách, "
+        "chu kỳ tăng trưởng, năng lực quản trị và chất lượng dữ liệu khác nhau giữa các nước."
     )
 
 

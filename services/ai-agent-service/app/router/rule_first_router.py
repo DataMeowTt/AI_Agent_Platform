@@ -11,104 +11,84 @@ from app.pipeline.schemas import RuleRouteDraft
 from app.resolver.country_resolver import resolve_countries
 
 
-FOLLOW_UP_ANALYSIS_KEYWORDS = (
-    "giai thich",
-    "tom tat",
-    "tóm tắt",
-    "dien giai",
-    "diễn giải",
-    "y nghia",
-    "ý nghĩa",
-    "ket luan",
-    "kết luận",
-    "insight",
-    "vi sao nuoc",
-    "vì sao nước",
+ANALYSIS_MARKERS = (
     "vi sao",
     "tai sao",
+    "ly do",
+    "nguyen nhan",
+    "phan tich",
     "nhan xet",
-    "phan tich them",
-    "ket qua nay",
-    "xu huong nay",
+    "insight",
+    "diem chung",
+    "rui ro",
+    "tom tat",
+    "dien giai",
+    "ket luan",
+    "y nghia",
 )
 
+CONTEXT_REFERENCE_MARKERS = (
+    "nay",
+    "do",
+    "tren",
+    "nhom nay",
+    "cac nuoc nay",
+    "ket qua",
+    "bang",
+    "bieu do",
+    "xu huong",
+)
 
-
-FOLLOW_UP_MODIFY_KEYWORDS = (
+MODIFY_MARKERS = (
     "them",
-    "doi giai doan",
-    "đổi giai đoạn",
-    "tu nam",
-    "từ năm",
-    "den nam",
-    "đến năm",
-    "thay bang",
-    "thay bằng",
-    "bo ",
-    "bỏ ",
-    "xoa ",
-    "xóa ",
+    "bo",
+    "xoa",
+    "doi",
+    "thay",
     "chi lay",
-    "chỉ lấy",
     "cho them",
-    "cho thêm",
-    "doi sang nam",
-    "top 5",
-    "top 10",
+    "top",
     "thap nhat",
     "cao nhat",
-    "doi thanh",
+    "tu nam",
+    "den nam",
+    "giai doan",
 )
 
-GENERAL_EXPLANATION_KEYWORDS = (
+DEFINITION_MARKERS = (
     "la gi",
-    "là gì",
     "nghia la gi",
-    "nghĩa là gì",
     "y nghia",
-    "ý nghĩa",
     "cach hieu",
-    "cách hiểu",
     "dung de",
-    "dùng để",
     "phan anh dieu gi",
-    "phản ánh điều gì",
     "phan anh gi",
-    "phản ánh gì",
     "cho biet dieu gi",
-    "cho biết điều gì",
     "dung de danh gia",
-    "dùng để đánh giá",
     "noi len dieu gi",
-    "nói lên điều gì",
     "the hien dieu gi",
-    "thể hiện điều gì",
+    "khac gi",
 )
 
-COVERAGE_KEYWORDS = (
+COVERAGE_MARKERS = (
     "coverage",
     "co bao nhieu quan sat",
-    "có bao nhiêu quan sát",
     "co du lieu khong",
-    "có dữ liệu không",
     "thieu du lieu",
-    "thiếu dữ liệu",
     "phu du lieu",
-    "phủ dữ liệu",
     "pham vi du lieu",
     "du lieu co tu",
-    "coverage du lieu",
 )
 
-COMPARE_KEYWORDS = (
+COMPARE_MARKERS = (
     "so sanh",
     "compare",
-    "vs",
+    " vs ",
     "voi",
     "giua",
 )
 
-RANKING_KEYWORDS = (
+RANKING_MARKERS = (
     "top",
     "cao nhat",
     "thap nhat",
@@ -118,7 +98,7 @@ RANKING_KEYWORDS = (
     "lowest",
 )
 
-TREND_KEYWORDS = (
+TREND_MARKERS = (
     "xu huong",
     "trend",
     "qua cac nam",
@@ -126,7 +106,24 @@ TREND_KEYWORDS = (
     "giai doan",
 )
 
-OFF_TOPIC_KEYWORDS = (
+ANOMALY_MARKERS = (
+    "bat thuong",
+    "anomaly",
+    "outlier",
+)
+
+DATA_QUERY_MARKERS = (
+    *COVERAGE_MARKERS,
+    *COMPARE_MARKERS,
+    *RANKING_MARKERS,
+    *TREND_MARKERS,
+    *ANOMALY_MARKERS,
+    "du lieu",
+    "tu nam",
+    "den nam",
+)
+
+OFF_TOPIC_MARKERS = (
     "thoi tiet",
     "viet tho",
     "ke chuyen",
@@ -148,7 +145,28 @@ def run_rule_first_router(
     limit = _extract_limit(normalized)
     ranking_order = _extract_order(normalized)
 
-    if _contains_any(normalized, OFF_TOPIC_KEYWORDS):
+    has_previous_result = _has_previous_result(context)
+    has_previous_query = _has_previous_query(context)
+    has_new_data_slots = _has_new_data_slots(
+        indicator_match=indicator_match,
+        countries=countries,
+        country_groups=country_groups,
+        years=years,
+        limit=limit,
+        ranking_order=ranking_order,
+    )
+    has_definition_marker = _has_definition_marker(normalized)
+    has_analysis_marker = _has_analysis_marker(normalized)
+    has_modify_marker = _has_modify_marker(normalized)
+    has_context_reference_marker = _has_context_reference_marker(normalized)
+    has_data_query_marker = _has_data_query_marker(normalized)
+    has_coverage_marker = _contains_any(normalized, COVERAGE_MARKERS)
+    has_compare_marker = _contains_any(normalized, COMPARE_MARKERS)
+    has_ranking_marker = _contains_any(normalized, RANKING_MARKERS)
+    has_anomaly_marker = _contains_any(normalized, ANOMALY_MARKERS)
+    has_trend_marker = _contains_any(normalized, TREND_MARKERS)
+
+    if _contains_any(normalized, OFF_TOPIC_MARKERS):
         return RuleRouteDraft(
             matched=True,
             route="OFF_TOPIC",
@@ -156,9 +174,17 @@ def run_rule_first_router(
             needs_front_llm=False,
             needs_parser_agent=False,
             needs_db=False,
-            reason="Deterministic off-topic keyword matched.",
+            reason="Clear deterministic off-topic marker matched.",
         )
-    if indicator_match and _contains_any(normalized, GENERAL_EXPLANATION_KEYWORDS):
+
+    if (
+        has_definition_marker
+        and (indicator_match or unsupported_match)
+        and not countries
+        and not country_groups
+        and not years
+        and not has_data_query_marker
+    ):
         return RuleRouteDraft(
             matched=True,
             route="GENERAL_EXPLANATION",
@@ -167,9 +193,11 @@ def run_rule_first_router(
             needs_parser_agent=False,
             needs_db=False,
             intent_hint="GENERAL_EXPLANATION",
-            draft_indicators=[indicator_match.indicator.code],
-            reason="General explanation keyword matched with supported indicator.",
+            draft_indicators=[indicator_match.indicator.code] if indicator_match else [],
+            unsupported_terms=_unsupported_terms(unsupported_match),
+            reason="Definition query matched without data slots or data-query markers.",
         )
+
     if unsupported_match:
         return RuleRouteDraft(
             matched=True,
@@ -179,30 +207,20 @@ def run_rule_first_router(
             needs_parser_agent=True,
             needs_db=False,
             intent_hint="UNSUPPORTED",
-            unsupported_terms=[unsupported_match.label_vi or unsupported_match.matched_alias],
+            unsupported_terms=_unsupported_terms(unsupported_match),
             draft_countries=countries,
             draft_country_groups=country_groups,
             draft_start_year=years[0] if years else None,
             draft_end_year=years[-1] if years else None,
-            reason="Unsupported indicator matched canonical unsupported catalog.",
+            reason="Exact unsupported indicator alias matched canonical unsupported catalog.",
         )
 
-    has_previous_answer = bool(
-        context.get("last_answer")
-        or context.get("last_rows")
-        or context.get("last_data_summary")
-    )
-    has_previous_query = bool(context.get("last_parsed_query") or context.get("last_validated_query"))
-    has_explicit_data_query = bool(
-        indicator_match
-        and (
-            _contains_any(normalized, COVERAGE_KEYWORDS)
-            or _contains_any(normalized, COMPARE_KEYWORDS)
-            or _contains_any(normalized, RANKING_KEYWORDS)
-        )
-    )
-
-    if has_previous_answer and _contains_any(normalized, FOLLOW_UP_ANALYSIS_KEYWORDS):
+    if (
+        has_previous_result
+        and (has_analysis_marker or has_context_reference_marker)
+        and not has_modify_marker
+        and not has_new_data_slots
+    ):
         return RuleRouteDraft(
             matched=True,
             route="FOLLOW_UP_ANALYSIS",
@@ -211,117 +229,189 @@ def run_rule_first_router(
             needs_parser_agent=False,
             needs_db=False,
             uses_previous_context=True,
-            reason="Follow-up analysis keyword matched with previous context.",
+            reason="Follow-up analysis signal matched with previous result and no new data slots.",
+        )
+
+    if has_previous_result and (has_analysis_marker or has_context_reference_marker) and has_new_data_slots:
+        return _safe_low_confidence_draft(
+            indicator_match=indicator_match,
+            countries=countries,
+            country_groups=country_groups,
+            years=years,
+            limit=limit,
+            ranking_order=ranking_order,
+            confidence=0.7,
+            uses_previous_context=True,
+            intent_hint=_infer_intent_hint(normalized, indicator_match, countries, country_groups),
+            reason="Follow-up analysis signal also contains new data slots; defer to Front LLM / Parser Agent.",
         )
 
     delta = _extract_delta(normalized, countries)
-    if has_previous_query and not has_explicit_data_query and (_contains_any(normalized, FOLLOW_UP_MODIFY_KEYWORDS) or delta):
-        clear_delta = bool(delta)
-        return RuleRouteDraft(
-            matched=True,
-            route="FOLLOW_UP_MODIFY_QUERY",
-            confidence=0.9 if clear_delta else 0.75,
-            needs_front_llm=not clear_delta,
-            needs_parser_agent=True,
-            needs_db=True,
+    clear_delta = bool(delta)
+    if has_previous_query and (has_modify_marker or clear_delta):
+        if clear_delta:
+            return RuleRouteDraft(
+                matched=True,
+                route="FOLLOW_UP_MODIFY_QUERY",
+                confidence=0.9,
+                needs_front_llm=False,
+                needs_parser_agent=True,
+                needs_db=True,
+                uses_previous_context=True,
+                draft_countries=countries,
+                draft_start_year=years[0] if years else None,
+                draft_end_year=years[-1] if years else None,
+                draft_limit=limit,
+                draft_ranking_order=ranking_order,
+                delta=delta,
+                reason="Follow-up query modification matched previous query with explicit delta.",
+            )
+        return _safe_low_confidence_draft(
+            indicator_match=indicator_match,
+            countries=countries,
+            country_groups=country_groups,
+            years=years,
+            limit=limit,
+            ranking_order=ranking_order,
+            confidence=0.7,
             uses_previous_context=True,
-            draft_limit=limit,
-            draft_ranking_order=ranking_order,
-            draft_start_year=years[0] if years else None,
-            draft_end_year=years[-1] if years else None,
-            delta=delta or None,
-            reason="Follow-up query modification matched with previous query context.",
+            intent_hint=_infer_intent_hint(normalized, indicator_match, countries, country_groups),
+            reason="Modify signal matched previous query but delta is ambiguous; defer to Front LLM / Parser Agent.",
         )
 
-    if _contains_any(normalized, COVERAGE_KEYWORDS):
-        has_slot = bool(indicator_match or countries or country_groups)
-        return RuleRouteDraft(
-            matched=True,
-            route="DATA_QUERY",
-            confidence=0.9 if indicator_match else (0.85 if has_slot else 0.65),
-            needs_front_llm=not bool(indicator_match),
-            needs_parser_agent=True,
-            needs_db=True,
+    if has_coverage_marker:
+        if indicator_match:
+            return _build_data_draft(
+                intent_hint="COVERAGE",
+                indicator_match=indicator_match,
+                countries=countries,
+                country_groups=country_groups,
+                years=years,
+                limit=limit,
+                ranking_order=ranking_order,
+                confidence=0.9,
+                needs_front_llm=False,
+                reason="Coverage marker matched with a supported indicator.",
+            )
+        return _safe_low_confidence_draft(
+            indicator_match=indicator_match,
+            countries=countries,
+            country_groups=country_groups,
+            years=years,
+            limit=limit,
+            ranking_order=ranking_order,
+            confidence=0.65,
             intent_hint="COVERAGE",
-            draft_indicators=[indicator_match.indicator.code] if indicator_match else [],
-            draft_countries=countries,
-            draft_country_groups=country_groups,
-            reason="Coverage keyword matched.",
+            reason="Coverage marker lacks a deterministic indicator; defer to Front LLM / Parser Agent.",
         )
 
-    if (
-        indicator_match
-        and _contains_any(normalized, COMPARE_KEYWORDS)
-        and (len(countries) >= 2 or country_groups)
-    ):
-        return RuleRouteDraft(
-            matched=True,
-            route="DATA_QUERY",
-            confidence=0.92,
-            needs_front_llm=False,
-            needs_parser_agent=True,
-            needs_db=True,
+    if has_compare_marker:
+        if indicator_match and (len(countries) >= 2 or country_groups):
+            return _build_data_draft(
+                intent_hint="COMPARE_COUNTRIES",
+                indicator_match=indicator_match,
+                countries=countries,
+                country_groups=country_groups,
+                years=years,
+                limit=limit,
+                ranking_order=ranking_order,
+                confidence=0.92,
+                needs_front_llm=False,
+                reason="Compare marker matched with indicator and compare slots.",
+            )
+        if not indicator_match and not has_previous_query:
+            return RuleRouteDraft(
+                matched=True,
+                route="NEED_CLARIFICATION",
+                confidence=0.9,
+                needs_front_llm=False,
+                needs_parser_agent=False,
+                needs_db=False,
+                clarification_reason="missing_indicator",
+                clarification_questions=[
+                    "Bạn muốn phân tích chỉ số nào? Ví dụ: nợ công/GDP, lạm phát CPI, thất nghiệp, tăng trưởng GDP thực."
+                ],
+                reason="Compare query is missing indicator and has no previous query context.",
+            )
+        return _safe_low_confidence_draft(
+            indicator_match=indicator_match,
+            countries=countries,
+            country_groups=country_groups,
+            years=years,
+            limit=limit,
+            ranking_order=ranking_order,
+            confidence=0.7,
             intent_hint="COMPARE_COUNTRIES",
-            draft_indicators=[indicator_match.indicator.code],
-            draft_countries=countries,
-            draft_country_groups=country_groups,
-            draft_start_year=years[0] if years else None,
-            draft_end_year=years[-1] if years else None,
-            reason="Deterministic compare query matched indicator and country slots.",
+            reason="Compare marker lacks enough deterministic slots; defer to Front LLM / Parser Agent.",
         )
 
-    if indicator_match and _contains_any(normalized, RANKING_KEYWORDS):
-        return RuleRouteDraft(
-            matched=True,
-            route="DATA_QUERY",
-            confidence=0.92,
-            needs_front_llm=False,
-            needs_parser_agent=True,
-            needs_db=True,
+    if indicator_match and has_ranking_marker:
+        return _build_data_draft(
             intent_hint="RANKING",
-            draft_indicators=[indicator_match.indicator.code],
-            draft_start_year=years[0] if years else None,
-            draft_end_year=years[-1] if years else None,
-            draft_limit=limit or 10,
-            draft_ranking_order=ranking_order or "desc",
-            reason="Deterministic ranking query matched indicator and ranking slots.",
-        )
-
-    if (
-        indicator_match
-        and (countries or country_groups)
-        and (years or _contains_any(normalized, TREND_KEYWORDS))
-    ):
-        return RuleRouteDraft(
-            matched=True,
-            route="DATA_QUERY",
+            indicator_match=indicator_match,
+            countries=countries,
+            country_groups=country_groups,
+            years=years,
+            limit=limit or 10,
+            ranking_order=ranking_order or "desc",
             confidence=0.9,
             needs_front_llm=False,
-            needs_parser_agent=True,
-            needs_db=True,
-            intent_hint="TREND_ANALYSIS" if _contains_any(normalized, TREND_KEYWORDS) else "TIME_SERIES",
-            draft_indicators=[indicator_match.indicator.code],
-            draft_countries=countries,
-            draft_country_groups=country_groups,
-            draft_start_year=years[0] if years else None,
-            draft_end_year=years[-1] if years else None,
-            reason="Deterministic time-series query matched indicator and country slots.",
+            reason="Ranking marker matched with a supported indicator.",
         )
 
-    is_compare_or_ranking = _contains_any(normalized, COMPARE_KEYWORDS) or _contains_any(normalized, RANKING_KEYWORDS)
-    if is_compare_or_ranking and not indicator_match and not has_previous_query:
-        return RuleRouteDraft(
-            matched=True,
-            route="NEED_CLARIFICATION",
+    if indicator_match and has_anomaly_marker:
+        return _build_data_draft(
+            intent_hint="ANOMALY_DETECTION",
+            indicator_match=indicator_match,
+            countries=countries,
+            country_groups=country_groups,
+            years=years,
+            limit=limit,
+            ranking_order=ranking_order,
             confidence=0.9,
             needs_front_llm=False,
-            needs_parser_agent=False,
-            needs_db=False,
-            clarification_reason="missing_indicator",
-            clarification_questions=[
-                "Bạn muốn phân tích chỉ số nào? Ví dụ: nợ công/GDP, lạm phát CPI, thất nghiệp, tăng trưởng GDP thực."
-            ],
-            reason="Compare/ranking query is missing indicator and has no previous context.",
+            reason="Anomaly marker matched with a supported indicator.",
+        )
+
+    if indicator_match and (countries or country_groups) and (years or has_trend_marker):
+        return _build_data_draft(
+            intent_hint="TREND_ANALYSIS" if has_trend_marker else "TIME_SERIES",
+            indicator_match=indicator_match,
+            countries=countries,
+            country_groups=country_groups,
+            years=years,
+            limit=limit,
+            ranking_order=ranking_order,
+            confidence=0.9 if has_trend_marker else 0.88,
+            needs_front_llm=not has_trend_marker,
+            reason="Time-series data signal matched with indicator and country slots.",
+        )
+
+    if indicator_match and (countries or country_groups):
+        return _build_data_draft(
+            intent_hint="VALUE_LOOKUP",
+            indicator_match=indicator_match,
+            countries=countries,
+            country_groups=country_groups,
+            years=years,
+            limit=limit,
+            ranking_order=ranking_order,
+            confidence=0.75,
+            needs_front_llm=True,
+            reason="Indicator and country slots matched without enough intent context; defer to Front LLM / Parser Agent.",
+        )
+
+    if has_data_query_marker or indicator_match or has_new_data_slots:
+        return _safe_low_confidence_draft(
+            indicator_match=indicator_match,
+            countries=countries,
+            country_groups=country_groups,
+            years=years,
+            limit=limit,
+            ranking_order=ranking_order,
+            confidence=0.65,
+            intent_hint=_infer_intent_hint(normalized, indicator_match, countries, country_groups),
+            reason="Low-confidence deterministic signals only; defer to Front LLM / Parser Agent.",
         )
 
     return RuleRouteDraft(
@@ -329,16 +419,182 @@ def run_rule_first_router(
         confidence=0.0,
         needs_front_llm=True,
         needs_parser_agent=True,
-        reason="No reliable deterministic route matched.",
+        needs_db=True,
+        reason="No reliable deterministic route matched; defer to Front LLM / Parser Agent.",
+    )
+
+
+def _has_previous_result(context: dict[str, Any]) -> bool:
+    return bool(
+        context.get("last_answer")
+        or context.get("last_rows")
+        or context.get("last_data_summary")
+        or context.get("last_result_validation")
+    )
+
+
+def _has_previous_query(context: dict[str, Any]) -> bool:
+    return bool(
+        context.get("last_parsed_query")
+        or context.get("last_validated_query")
+        or context.get("last_query_plan")
+    )
+
+
+def _has_new_data_slots(
+    indicator_match: Any,
+    countries: list[str],
+    country_groups: list[str],
+    years: list[int],
+    limit: int | None,
+    ranking_order: str | None,
+) -> bool:
+    return bool(indicator_match or countries or country_groups or years or limit or ranking_order)
+
+
+def _has_data_query_marker(normalized: str) -> bool:
+    return _contains_any(normalized, DATA_QUERY_MARKERS)
+
+
+def _has_definition_marker(normalized: str) -> bool:
+    return _contains_any(normalized, DEFINITION_MARKERS)
+
+
+def _has_analysis_marker(normalized: str) -> bool:
+    return _contains_any(normalized, ANALYSIS_MARKERS)
+
+
+def _has_modify_marker(normalized: str) -> bool:
+    return _contains_any(normalized, MODIFY_MARKERS)
+
+
+def _has_context_reference_marker(normalized: str) -> bool:
+    return _contains_any(normalized, CONTEXT_REFERENCE_MARKERS)
+
+
+def _infer_intent_hint(
+    normalized: str,
+    indicator_match: Any,
+    countries: list[str],
+    country_groups: list[str],
+) -> str | None:
+    if _contains_any(normalized, COVERAGE_MARKERS):
+        return "COVERAGE"
+    if _contains_any(normalized, COMPARE_MARKERS):
+        return "COMPARE_COUNTRIES"
+    if _contains_any(normalized, RANKING_MARKERS):
+        return "RANKING"
+    if _contains_any(normalized, ANOMALY_MARKERS):
+        return "ANOMALY_DETECTION"
+    if _contains_any(normalized, TREND_MARKERS):
+        return "TREND_ANALYSIS"
+    if indicator_match and (countries or country_groups):
+        return "TIME_SERIES"
+    if indicator_match:
+        return "VALUE_LOOKUP"
+    return None
+
+
+def _build_data_draft(
+    *,
+    intent_hint: str,
+    indicator_match: Any,
+    countries: list[str],
+    country_groups: list[str],
+    years: list[int],
+    limit: int | None,
+    ranking_order: str | None,
+    confidence: float,
+    needs_front_llm: bool,
+    reason: str,
+) -> RuleRouteDraft:
+    return RuleRouteDraft(
+        matched=True,
+        route="DATA_QUERY",
+        confidence=confidence,
+        needs_front_llm=needs_front_llm,
+        needs_parser_agent=True,
+        needs_db=True,
+        intent_hint=intent_hint,
+        draft_indicators=[indicator_match.indicator.code] if indicator_match else [],
+        draft_countries=countries,
+        draft_country_groups=country_groups,
+        draft_start_year=years[0] if years else None,
+        draft_end_year=years[-1] if years else None,
+        draft_limit=limit,
+        draft_ranking_order=ranking_order,
+        reason=reason,
+    )
+
+
+def _safe_low_confidence_draft(
+    *,
+    indicator_match: Any,
+    countries: list[str],
+    country_groups: list[str],
+    years: list[int],
+    limit: int | None,
+    ranking_order: str | None,
+    confidence: float = 0.65,
+    uses_previous_context: bool = False,
+    intent_hint: str | None = None,
+    reason: str = "Low-confidence deterministic signals only; defer to Front LLM / Parser Agent.",
+) -> RuleRouteDraft:
+    return RuleRouteDraft(
+        matched=True,
+        route="DATA_QUERY" if (indicator_match or countries or country_groups or years or limit or ranking_order or intent_hint) else None,
+        confidence=confidence,
+        needs_front_llm=True,
+        needs_parser_agent=True,
+        needs_db=True,
+        uses_previous_context=uses_previous_context,
+        intent_hint=intent_hint,
+        draft_indicators=[indicator_match.indicator.code] if indicator_match else [],
+        draft_countries=countries,
+        draft_country_groups=country_groups,
+        draft_start_year=years[0] if years else None,
+        draft_end_year=years[-1] if years else None,
+        draft_limit=limit,
+        draft_ranking_order=ranking_order,
+        reason=reason,
     )
 
 
 def _contains_any(normalized_text: str, keywords: tuple[str, ...]) -> bool:
-    return any(keyword in normalized_text for keyword in keywords)
+    padded = f" {normalized_text} "
+
+    for keyword in keywords:
+        key = str(keyword or "").strip()
+        if not key:
+            continue
+
+        if len(key) <= 3:
+            if re.search(rf"(^|\s){re.escape(key)}($|\s)", normalized_text):
+                return True
+            continue
+        if " " in key:
+            if f" {key} " in padded:
+                return True
+            continue
+        if key in normalized_text:
+            return True
+
+    return False
+
+
+def _unsupported_terms(unsupported_match: Any) -> list[str]:
+    if not unsupported_match:
+        return []
+    return [unsupported_match.label_vi or unsupported_match.matched_alias]
 
 
 def _extract_years(normalized_text: str) -> list[int]:
-    return [int(year) for year in re.findall(r"\b((?:19|20)\d{2})\b", normalized_text)]
+    years: list[int] = []
+    for raw_year in re.findall(r"\b((?:19|20)\d{2})\b", normalized_text):
+        year = int(raw_year)
+        if year not in years:
+            years.append(year)
+    return years
 
 
 def _extract_limit(normalized_text: str) -> int | None:
@@ -371,6 +627,8 @@ def _extract_delta(normalized_text: str, countries: list[str]) -> dict[str, Any]
         delta["ranking_order"] = ranking_order
     if countries and "them" in normalized_text:
         delta["add_countries"] = countries
+    elif countries and ("bo" in normalized_text or "xoa" in normalized_text):
+        delta["remove_countries"] = countries
     elif countries:
         delta["countries"] = countries
     return {key: value for key, value in delta.items() if value is not None}
