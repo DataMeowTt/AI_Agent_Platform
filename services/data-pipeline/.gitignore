@@ -12,3 +12,4 @@ env/
 ENV/
 .venv/
 .env
+services/data-pipeline/data

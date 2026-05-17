@@ -16,3 +16,4 @@ job.txt
 *.pyo
 *.pyd
 .DS_Store
+services/data-pipeline/data

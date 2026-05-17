@@ -1,0 +1,8 @@
+tmp/
+summarize/
+services/data-pipeline/data
+reports/
+memory/
+logs/
+docs/
+job.txt
