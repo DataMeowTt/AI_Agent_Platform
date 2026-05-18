@@ -96,7 +96,45 @@ class BigQueryWarehouseWriter:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
         return f"{prefix}_{stamp}"
 
-    def load_parquet(self, *, parquet_path: Path, table_id: str) -> str:
+    def get_table_layout(self, table_id: str) -> tuple[dict[str, int | str] | None, list[str] | None]:
+        if self.backend == "python_client":
+            table_obj = self._client.get_table(table_id)
+            range_partitioning = getattr(table_obj, "range_partitioning", None)
+            clustering_fields = getattr(table_obj, "clustering_fields", None)
+            partition_payload: dict[str, int | str] | None = None
+            if range_partitioning and getattr(range_partitioning, "range_", None):
+                partition_payload = {
+                    "field": str(range_partitioning.field),
+                    "start": int(range_partitioning.range_.start),
+                    "end": int(range_partitioning.range_.end),
+                    "interval": int(range_partitioning.range_.interval),
+                }
+            cluster_payload = [str(item) for item in clustering_fields] if clustering_fields else None
+            return partition_payload, cluster_payload
+
+        payload = json.loads(self._run_bq(["show", self._to_bq_table_ref(table_id)], json_output=True))
+        partition_raw = payload.get("rangePartitioning")
+        partition_payload = None
+        if partition_raw:
+            raw_range = partition_raw.get("range") or {}
+            partition_payload = {
+                "field": str(partition_raw["field"]),
+                "start": int(raw_range["start"]),
+                "end": int(raw_range["end"]),
+                "interval": int(raw_range["interval"]),
+            }
+        clustering_raw = payload.get("clustering") or {}
+        cluster_payload = [str(item) for item in (clustering_raw.get("fields") or [])] or None
+        return partition_payload, cluster_payload
+
+    def load_parquet(
+        self,
+        *,
+        parquet_path: Path,
+        table_id: str,
+        range_partitioning: dict[str, int | str] | None = None,
+        clustering_fields: list[str] | None = None,
+    ) -> str:
         if self.backend == "python_client":
             from google.cloud import bigquery
 
@@ -105,6 +143,17 @@ class BigQueryWarehouseWriter:
                 write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
                 create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED,
             )
+            if range_partitioning:
+                config.range_partitioning = bigquery.RangePartitioning(
+                    field=str(range_partitioning["field"]),
+                    range_=bigquery.PartitionRange(
+                        start=int(range_partitioning["start"]),
+                        end=int(range_partitioning["end"]),
+                        interval=int(range_partitioning["interval"]),
+                    ),
+                )
+            if clustering_fields:
+                config.clustering_fields = list(clustering_fields)
             with parquet_path.open("rb") as file_obj:
                 job = self._client.load_table_from_file(
                     file_obj,
@@ -121,6 +170,18 @@ class BigQueryWarehouseWriter:
                 "load",
                 "--source_format=PARQUET",
                 "--replace=true",
+                *(
+                    [
+                        "--range_partitioning="
+                        f"{range_partitioning['field']},"
+                        f"{int(range_partitioning['start'])},"
+                        f"{int(range_partitioning['end'])},"
+                        f"{int(range_partitioning['interval'])}"
+                    ]
+                    if range_partitioning
+                    else []
+                ),
+                *(["--clustering_fields=" + ",".join(clustering_fields)] if clustering_fields else []),
                 self._to_bq_table_ref(table_id),
                 str(parquet_path),
             ],
@@ -198,7 +259,13 @@ def publish_with_staging(
     active_writer = writer or BigQueryWarehouseWriter(project_id=project_id, location=location)
     staging_table_id = f"{project_id}.{dataset}.{staging_table}"
     production_table_id = f"{project_id}.{dataset}.{production_table}"
-    load_job_id = active_writer.load_parquet(parquet_path=parquet_path, table_id=staging_table_id)
+    range_partitioning, clustering_fields = active_writer.get_table_layout(production_table_id)
+    load_job_id = active_writer.load_parquet(
+        parquet_path=parquet_path,
+        table_id=staging_table_id,
+        range_partitioning=range_partitioning,
+        clustering_fields=clustering_fields,
+    )
     staging_row_count, staging_columns = active_writer.get_table_info(staging_table_id)
     if staging_row_count != local_row_count:
         raise ValueError(
@@ -237,4 +304,3 @@ def publish_with_staging(
 def save_write_results(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-

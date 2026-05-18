@@ -721,7 +721,7 @@ def build_publish_plan(
     analytics_tables: dict[str, pd.DataFrame],
     project_id: str,
 ) -> dict[str, Any]:
-    timestamp = metadata.loaded_at.strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     plan_tables: list[dict[str, Any]] = []
     for table_name in GOLD_TABLE_NAMES:
         plan_tables.append(
