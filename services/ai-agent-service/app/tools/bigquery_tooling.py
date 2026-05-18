@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.core.config import settings
 from app.db.bigquery import run_bigquery_query
 from app.tools.common import ToolError
 
@@ -10,35 +11,82 @@ from app.tools.common import ToolError
 _IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SELECT_STAR_PATTERN = re.compile(r"\bselect\s+\*", re.IGNORECASE)
 
-_TABLE_WHITELIST: frozenset[str] = frozenset(
-    {
-        "western-pivot-452008-a6.gov_ai_gold.gold_growth_dynamics",
-        "western-pivot-452008-a6.gov_ai_gold.gold_fiscal_monetary",
-        "western-pivot-452008-a6.gov_ai_gold.gold_crisis_risk",
-        "western-pivot-452008-a6.gov_ai_gold.gold_social_welfare",
-        "western-pivot-452008-a6.gov_ai_gold.gold_structural_composition",
-        "western-pivot-452008-a6.gov_ai_analytics.analytics_gold_growth_dynamics",
-        "western-pivot-452008-a6.gov_ai_analytics.analytics_gold_fiscal_monetary",
-        "western-pivot-452008-a6.gov_ai_analytics.analytics_gold_crisis_risk",
-        "western-pivot-452008-a6.gov_ai_analytics.analytics_gold_social_welfare",
-        "western-pivot-452008-a6.gov_ai_analytics.analytics_gold_structural_composition",
-        "western-pivot-452008-a6.gov_ai_analytics.analytics_clusters",
-    }
+
+def _normalized_setting(value: str, fallback: str) -> str:
+    stripped = (value or "").strip()
+    return stripped or fallback
+
+
+def _build_fqdn(project: str, dataset: str, table: str) -> str:
+    return f"{project}.{dataset}.{table}"
+
+
+_PROJECT_ID = _normalized_setting(settings.bigquery_project_id, "western-pivot-452008-a6")
+_GOLD_DATASET = _normalized_setting(settings.bigquery_gold_dataset, "gov_ai_gold")
+_ANALYTICS_DATASET = _normalized_setting(
+    settings.bigquery_analytics_dataset,
+    "gov_ai_analytics",
 )
 
 _SHORT_TO_FQDN = {
-    "gold_growth_dynamics": "western-pivot-452008-a6.gov_ai_gold.gold_growth_dynamics",
-    "gold_fiscal_monetary": "western-pivot-452008-a6.gov_ai_gold.gold_fiscal_monetary",
-    "gold_crisis_risk": "western-pivot-452008-a6.gov_ai_gold.gold_crisis_risk",
-    "gold_social_welfare": "western-pivot-452008-a6.gov_ai_gold.gold_social_welfare",
-    "gold_structural_composition": "western-pivot-452008-a6.gov_ai_gold.gold_structural_composition",
-    "analytics_gold_growth_dynamics": "western-pivot-452008-a6.gov_ai_analytics.analytics_gold_growth_dynamics",
-    "analytics_gold_fiscal_monetary": "western-pivot-452008-a6.gov_ai_analytics.analytics_gold_fiscal_monetary",
-    "analytics_gold_crisis_risk": "western-pivot-452008-a6.gov_ai_analytics.analytics_gold_crisis_risk",
-    "analytics_gold_social_welfare": "western-pivot-452008-a6.gov_ai_analytics.analytics_gold_social_welfare",
-    "analytics_gold_structural_composition": "western-pivot-452008-a6.gov_ai_analytics.analytics_gold_structural_composition",
-    "analytics_clusters": "western-pivot-452008-a6.gov_ai_analytics.analytics_clusters",
+    "gold_growth_dynamics": _build_fqdn(
+        _PROJECT_ID,
+        _GOLD_DATASET,
+        "gold_growth_dynamics",
+    ),
+    "gold_fiscal_monetary": _build_fqdn(
+        _PROJECT_ID,
+        _GOLD_DATASET,
+        "gold_fiscal_monetary",
+    ),
+    "gold_crisis_risk": _build_fqdn(
+        _PROJECT_ID,
+        _GOLD_DATASET,
+        "gold_crisis_risk",
+    ),
+    "gold_social_welfare": _build_fqdn(
+        _PROJECT_ID,
+        _GOLD_DATASET,
+        "gold_social_welfare",
+    ),
+    "gold_structural_composition": _build_fqdn(
+        _PROJECT_ID,
+        _GOLD_DATASET,
+        "gold_structural_composition",
+    ),
+    "analytics_gold_growth_dynamics": _build_fqdn(
+        _PROJECT_ID,
+        _ANALYTICS_DATASET,
+        "analytics_gold_growth_dynamics",
+    ),
+    "analytics_gold_fiscal_monetary": _build_fqdn(
+        _PROJECT_ID,
+        _ANALYTICS_DATASET,
+        "analytics_gold_fiscal_monetary",
+    ),
+    "analytics_gold_crisis_risk": _build_fqdn(
+        _PROJECT_ID,
+        _ANALYTICS_DATASET,
+        "analytics_gold_crisis_risk",
+    ),
+    "analytics_gold_social_welfare": _build_fqdn(
+        _PROJECT_ID,
+        _ANALYTICS_DATASET,
+        "analytics_gold_social_welfare",
+    ),
+    "analytics_gold_structural_composition": _build_fqdn(
+        _PROJECT_ID,
+        _ANALYTICS_DATASET,
+        "analytics_gold_structural_composition",
+    ),
+    "analytics_clusters": _build_fqdn(
+        _PROJECT_ID,
+        _ANALYTICS_DATASET,
+        "analytics_clusters",
+    ),
 }
+
+_TABLE_WHITELIST: frozenset[str] = frozenset(_SHORT_TO_FQDN.values())
 
 
 def list_whitelisted_tables() -> list[str]:

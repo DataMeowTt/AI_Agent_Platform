@@ -11,25 +11,31 @@ import {
 
 const DEFAULT_PROJECT_ID = 'western-pivot-452008-a6';
 const DEFAULT_LOCATION = 'asia-southeast1';
+const DEFAULT_GOLD_DATASET = 'gov_ai_gold';
+const DEFAULT_ANALYTICS_DATASET = 'gov_ai_analytics';
 const DEFAULT_MAX_BYTES_BILLED = 100000000;
 const DEFAULT_CACHE_TTL_SECONDS = 300;
 const MAX_LIMIT = 100;
+
+type BigQueryTables = {
+  goldGrowthDynamics: string;
+  analyticsClusters: string;
+  analyticsGoldGrowthDynamics: string;
+  analyticsGoldFiscalMonetary: string;
+  analyticsGoldCrisisRisk: string;
+};
 
 @Injectable()
 export class BigQueryService {
   private readonly projectId: string;
   private readonly location: string;
+  private readonly goldDataset: string;
+  private readonly analyticsDataset: string;
   private readonly maximumBytesBilled: number;
   private readonly cacheTtlSeconds: number;
   private readonly client: BigQuery;
-
-  private readonly whitelistedTables = new Set<string>([
-    'western-pivot-452008-a6.gov_ai_gold.gold_growth_dynamics',
-    'western-pivot-452008-a6.gov_ai_analytics.analytics_clusters',
-    'western-pivot-452008-a6.gov_ai_analytics.analytics_gold_growth_dynamics',
-    'western-pivot-452008-a6.gov_ai_analytics.analytics_gold_fiscal_monetary',
-    'western-pivot-452008-a6.gov_ai_analytics.analytics_gold_crisis_risk',
-  ]);
+  private readonly tables: BigQueryTables;
+  private readonly whitelistedTables: Set<string>;
 
   constructor(
     private readonly configService: ConfigService,
@@ -39,6 +45,12 @@ export class BigQueryService {
       this.configService.get<string>('BIGQUERY_PROJECT_ID') || DEFAULT_PROJECT_ID;
     this.location =
       this.configService.get<string>('BIGQUERY_LOCATION') || DEFAULT_LOCATION;
+    this.goldDataset =
+      this.configService.get<string>('BIGQUERY_GOLD_DATASET') ||
+      DEFAULT_GOLD_DATASET;
+    this.analyticsDataset =
+      this.configService.get<string>('BIGQUERY_ANALYTICS_DATASET') ||
+      DEFAULT_ANALYTICS_DATASET;
     this.maximumBytesBilled = Number(
       this.configService.get<string>('BIGQUERY_MAX_BYTES_BILLED') ||
         DEFAULT_MAX_BYTES_BILLED,
@@ -47,6 +59,38 @@ export class BigQueryService {
       this.configService.get<string>('BIGQUERY_CACHE_TTL_SECONDS') ||
         DEFAULT_CACHE_TTL_SECONDS,
     );
+
+    this.tables = {
+      goldGrowthDynamics: this.buildTableRef(
+        this.goldDataset,
+        'gold_growth_dynamics',
+      ),
+      analyticsClusters: this.buildTableRef(
+        this.analyticsDataset,
+        'analytics_clusters',
+      ),
+      analyticsGoldGrowthDynamics: this.buildTableRef(
+        this.analyticsDataset,
+        'analytics_gold_growth_dynamics',
+      ),
+      analyticsGoldFiscalMonetary: this.buildTableRef(
+        this.analyticsDataset,
+        'analytics_gold_fiscal_monetary',
+      ),
+      analyticsGoldCrisisRisk: this.buildTableRef(
+        this.analyticsDataset,
+        'analytics_gold_crisis_risk',
+      ),
+    };
+
+    this.whitelistedTables = new Set<string>([
+      this.tables.goldGrowthDynamics,
+      this.tables.analyticsClusters,
+      this.tables.analyticsGoldGrowthDynamics,
+      this.tables.analyticsGoldFiscalMonetary,
+      this.tables.analyticsGoldCrisisRisk,
+    ]);
+
     this.client = new BigQuery({ projectId: this.projectId });
   }
 
@@ -56,7 +100,7 @@ export class BigQueryService {
         g.country_code AS country_code,
         g.country AS country_name,
         ANY_VALUE(g.income_group) AS region
-      FROM \`western-pivot-452008-a6.gov_ai_gold.gold_growth_dynamics\` g
+      FROM \`${this.tables.goldGrowthDynamics}\` g
       GROUP BY g.country_code, g.country
       ORDER BY g.country ASC
       LIMIT @limit
@@ -73,7 +117,7 @@ export class BigQueryService {
         c.year AS year,
         c.cluster_id AS cluster_id,
         c.latest_valid_year AS latest_valid_year
-      FROM \`western-pivot-452008-a6.gov_ai_analytics.analytics_clusters\` c
+      FROM \`${this.tables.analyticsClusters}\` c
       WHERE c.year = @year
       ORDER BY c.country_code ASC
       LIMIT @limit
@@ -117,8 +161,8 @@ export class BigQueryService {
           a.rGDP_growth_YoY_actual AS actual_value,
           a.rGDP_growth_YoY_anomaly_score AS anomaly_score,
           g.country AS country_name
-        FROM \`western-pivot-452008-a6.gov_ai_analytics.analytics_gold_growth_dynamics\` a
-        LEFT JOIN \`western-pivot-452008-a6.gov_ai_gold.gold_growth_dynamics\` g
+        FROM \`${this.tables.analyticsGoldGrowthDynamics}\` a
+        LEFT JOIN \`${this.tables.goldGrowthDynamics}\` g
           ON g.country_code = a.country_code AND g.year = a.year
         WHERE a.rGDP_growth_YoY_anomaly_score BETWEEN @threshold AND 1
           ${countryFilterSql}
@@ -134,8 +178,8 @@ export class BigQueryService {
           a.govdebt_GDP_actual AS actual_value,
           a.govdebt_GDP_anomaly_score AS anomaly_score,
           g.country AS country_name
-        FROM \`western-pivot-452008-a6.gov_ai_analytics.analytics_gold_fiscal_monetary\` a
-        LEFT JOIN \`western-pivot-452008-a6.gov_ai_gold.gold_growth_dynamics\` g
+        FROM \`${this.tables.analyticsGoldFiscalMonetary}\` a
+        LEFT JOIN \`${this.tables.goldGrowthDynamics}\` g
           ON g.country_code = a.country_code AND g.year = a.year
         WHERE a.govdebt_GDP_anomaly_score BETWEEN @threshold AND 1
           ${countryFilterSql}
@@ -151,8 +195,8 @@ export class BigQueryService {
           a.REER_deviation_actual AS actual_value,
           a.REER_deviation_anomaly_score AS anomaly_score,
           g.country AS country_name
-        FROM \`western-pivot-452008-a6.gov_ai_analytics.analytics_gold_crisis_risk\` a
-        LEFT JOIN \`western-pivot-452008-a6.gov_ai_gold.gold_growth_dynamics\` g
+        FROM \`${this.tables.analyticsGoldCrisisRisk}\` a
+        LEFT JOIN \`${this.tables.goldGrowthDynamics}\` g
           ON g.country_code = a.country_code AND g.year = a.year
         WHERE a.REER_deviation_anomaly_score BETWEEN @threshold AND 1
           ${countryFilterSql}
@@ -240,6 +284,10 @@ export class BigQueryService {
         offset,
       },
     };
+  }
+
+  private buildTableRef(dataset: string, table: string): string {
+    return `${this.projectId}.${dataset}.${table}`;
   }
 
   private async executeQuery<T>(

@@ -11,6 +11,10 @@ from app.tools.indicator_series_tool import get_indicator_series
 from app.tools.ranking_tool import rank_countries
 
 
+def _table_fqdn(dataset: str, table: str) -> str:
+    return f"{settings.bigquery_project_id}.{dataset}.{table}"
+
+
 def test_compare_raw_builds_safe_bigquery_sql(monkeypatch) -> None:
     monkeypatch.setattr(settings, "ai_agent_data_source", "bigquery")
     calls: list[dict] = []
@@ -31,7 +35,7 @@ def test_compare_raw_builds_safe_bigquery_sql(monkeypatch) -> None:
     assert len(calls) >= 1
     series_call = calls[0]
     assert "SELECT *" not in series_call["query"].upper()
-    assert "western-pivot-452008-a6.gov_ai_gold.gold_fiscal_monetary" in series_call["query"]
+    assert _table_fqdn(settings.bigquery_gold_dataset, "gold_fiscal_monetary") in series_call["query"]
     assert "`govdebt_GDP` AS value" in series_call["query"]
     assert series_call["params"]["country_codes"] == ["VNM", "THA"]
     assert series_call["params"]["start_year"] == 2010
@@ -96,8 +100,8 @@ def test_unsupported_indicator_does_not_call_bigquery(monkeypatch) -> None:
 def test_select_star_is_rejected() -> None:
     with pytest.raises(ToolError):
         execute_bigquery_select(
-            sql="SELECT * FROM `western-pivot-452008-a6.gov_ai_gold.gold_fiscal_monetary`",
-            referenced_tables=["western-pivot-452008-a6.gov_ai_gold.gold_fiscal_monetary"],
+            sql=f"SELECT * FROM `{_table_fqdn(settings.bigquery_gold_dataset, 'gold_fiscal_monetary')}`",
+            referenced_tables=[_table_fqdn(settings.bigquery_gold_dataset, "gold_fiscal_monetary")],
             params={},
         )
 
@@ -105,8 +109,8 @@ def test_select_star_is_rejected() -> None:
 def test_non_whitelisted_table_is_rejected() -> None:
     with pytest.raises(ToolError):
         execute_bigquery_select(
-            sql="SELECT country_code FROM `western-pivot-452008-a6.gov_ai_gold.some_other_table`",
-            referenced_tables=["western-pivot-452008-a6.gov_ai_gold.some_other_table"],
+            sql=f"SELECT country_code FROM `{settings.bigquery_project_id}.{settings.bigquery_gold_dataset}.some_other_table`",
+            referenced_tables=[f"{settings.bigquery_project_id}.{settings.bigquery_gold_dataset}.some_other_table"],
             params={},
         )
 

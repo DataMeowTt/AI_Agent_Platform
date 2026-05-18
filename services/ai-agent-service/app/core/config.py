@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     ai_agent_data_source: str = "postgres"
     bigquery_project_id: str = "western-pivot-452008-a6"
     bigquery_location: str = "asia-southeast1"
+    bigquery_gold_dataset: str = "gov_ai_gold"
+    bigquery_analytics_dataset: str = "gov_ai_analytics"
     bigquery_max_bytes_billed: int = 100000000
     bigquery_cache_ttl_seconds: int = 60
 

@@ -25,6 +25,8 @@ describe('BigQueryService', () => {
       get: jest.fn((key: string) => {
         if (key === 'BIGQUERY_PROJECT_ID') return 'western-pivot-452008-a6';
         if (key === 'BIGQUERY_LOCATION') return 'asia-southeast1';
+        if (key === 'BIGQUERY_GOLD_DATASET') return 'gov_ai_gold';
+        if (key === 'BIGQUERY_ANALYTICS_DATASET') return 'gov_ai_analytics';
         if (key === 'BIGQUERY_MAX_BYTES_BILLED') return '100000000';
         if (key === 'BIGQUERY_CACHE_TTL_SECONDS') return '300';
         return undefined;
@@ -55,6 +57,7 @@ describe('BigQueryService', () => {
     expect(queryArg).not.toMatch(/\bmethod\b/i);
     expect(queryArg).toContain('c.latest_valid_year AS latest_valid_year');
     expect(queryArg).toContain('c.country AS country');
+    expect(queryArg).toContain('`western-pivot-452008-a6.gov_ai_analytics.analytics_clusters`');
   });
 
   it('getAnomalies should return empty for unsupported indicator', async () => {
