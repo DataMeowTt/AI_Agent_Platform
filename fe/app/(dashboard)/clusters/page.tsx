@@ -22,7 +22,7 @@ export default function ClustersPage() {
 }
 
 function ClustersPageContent() {
-  const [year, setYear] = useUrlState<number>('year', 2022);
+  const [year, setYear] = useUrlState<number>('year', 2025);
   const { data: clusters, isLoading, isEmpty, isError, error } = useDataState(useClusters(year));
 
   const { clusterCounts, grouped } = useMemo(() => {
@@ -66,7 +66,7 @@ function ClustersPageContent() {
             onChange={(e) => setYear(parseInt(e.target.value))}
             className="text-sm font-semibold text-gray-900 bg-transparent border-none focus:ring-0 cursor-pointer"
           >
-            {[2000, 2010, 2015, 2020, 2022].map(y => (
+            {[2000, 2010, 2020, 2025].map(y => (
               <option key={y} value={y}>{y}</option>
             ))}
           </select>
