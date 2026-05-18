@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
 import { GoldGrowthDynamics } from '../entities/gold-growth-dynamics.entity';
 import { AnalyticsGoldGrowthDynamics } from '../entities/analytics-gold-growth-dynamics.entity';
@@ -9,9 +10,12 @@ import { AnalyticsClusters } from '../entities/analytics-clusters.entity';
 import { AnalyticsGoldStructuralComposition } from '../entities/analytics-gold-structural-composition.entity';
 import { AnalyticsGoldCrisisRisk } from '../entities/analytics-gold-crisis-risk.entity';
 import { GoldStructuralComposition } from '../entities/gold-structural-composition.entity';
+import { BigQueryService } from '../bigquery/bigquery.service';
 @Injectable()
 export class CountriesService {
   constructor(
+    private readonly configService: ConfigService,
+    private readonly bigQueryService: BigQueryService,
     @InjectRepository(GoldGrowthDynamics)
     private growthRepo: Repository<GoldGrowthDynamics>,
     @InjectRepository(AnalyticsGoldGrowthDynamics)
@@ -59,6 +63,10 @@ export class CountriesService {
     }
   }
   async findAll() {
+    if (this.isBigQueryMode()) {
+      return this.bigQueryService.listCountries();
+    }
+
     const results = await this.growthRepo
       .createQueryBuilder('g')
       .select([
@@ -71,6 +79,11 @@ export class CountriesService {
       .getRawMany();
     return results;
   }
+
+  private isBigQueryMode(): boolean {
+    return this.configService.get<string>('BACKEND_DATA_SOURCE') === 'bigquery';
+  }
+
   async getFullCountryAnalytics(countryCode: string) {
     const qb = this.growthRepo.createQueryBuilder('g');
     const rows = await qb

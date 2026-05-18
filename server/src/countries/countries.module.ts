@@ -9,9 +9,11 @@ import { AnalyticsGoldSocialWelfare } from '../entities/analytics-gold-social-we
 import { AnalyticsGoldStructuralComposition } from '../entities/analytics-gold-structural-composition.entity';
 import { AnalyticsGoldCrisisRisk } from '../entities/analytics-gold-crisis-risk.entity';
 import { AnalyticsClusters } from '../entities/analytics-clusters.entity';
+import { BigQueryModule } from '../bigquery/bigquery.module';
 
 @Module({
   imports: [
+    BigQueryModule,
     TypeOrmModule.forFeature([
       GoldGrowthDynamics,
       AnalyticsGoldGrowthDynamics,

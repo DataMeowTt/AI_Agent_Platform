@@ -1,11 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { ConfigService } from '@nestjs/config';
 import { Repository, Between } from 'typeorm';
 import { AnalyticsClusters } from '../entities/analytics-clusters.entity';
 import { AnalyticsGoldGrowthDynamics } from '../entities/analytics-gold-growth-dynamics.entity';
 import { AnalyticsGoldFiscalMonetary } from '../entities/analytics-gold-fiscal-monetary.entity';
 import { AnalyticsGoldCrisisRisk } from '../entities/analytics-gold-crisis-risk.entity';
 import { GoldGrowthDynamics } from '../entities/gold-growth-dynamics.entity';
+import { BigQueryService } from '../bigquery/bigquery.service';
 
 export interface AnomalyItem {
   country_code: string;
@@ -19,6 +21,8 @@ export interface AnomalyItem {
 @Injectable()
 export class AnalyticsService {
   constructor(
+    private readonly configService: ConfigService,
+    private readonly bigQueryService: BigQueryService,
     @InjectRepository(AnalyticsClusters)
     private clustersRepo: Repository<AnalyticsClusters>,
     @InjectRepository(AnalyticsGoldGrowthDynamics)
@@ -32,6 +36,10 @@ export class AnalyticsService {
   ) {}
 
   async getClusters(year: number) {
+    if (this.isBigQueryMode()) {
+      return this.bigQueryService.getClusters(year);
+    }
+
     return this.clustersRepo.find({
       where: { year },
       order: { country_code: 'ASC' },
@@ -45,6 +53,16 @@ export class AnalyticsService {
     limit: number = 15,
     offset: number = 0,
   ) {
+    if (this.isBigQueryMode()) {
+      return this.bigQueryService.getAnomalies({
+        countryCode,
+        indicator,
+        threshold,
+        limit,
+        offset,
+      });
+    }
+
     const whereBase = { ...(countryCode && { country_code: countryCode }) };
 
     const [growthAnomalies] = await this.growthAnalyticsRepo.findAndCount({
@@ -100,5 +118,9 @@ export class AnalyticsService {
       items: pagedItems,
       meta: { total_count: totalCount, limit, offset },
     };
+  }
+
+  private isBigQueryMode(): boolean {
+    return this.configService.get<string>('BACKEND_DATA_SOURCE') === 'bigquery';
   }
 }
