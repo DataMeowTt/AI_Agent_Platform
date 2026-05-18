@@ -12,6 +12,11 @@ class Settings(BaseSettings):
     internal_api_key: str = "dev-internal-key"
 
     database_url: str | None = None
+    ai_agent_data_source: str = "postgres"
+    bigquery_project_id: str = "western-pivot-452008-a6"
+    bigquery_location: str = "asia-southeast1"
+    bigquery_max_bytes_billed: int = 100000000
+    bigquery_cache_ttl_seconds: int = 60
 
     pipeline_mode: str = "hybrid_v2"
     enable_hybrid_v2_fallback: bool = False
