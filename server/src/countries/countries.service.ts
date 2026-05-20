@@ -196,6 +196,12 @@ export class CountriesService {
       category: string;
       unit: string;
       value: number | null;
+      supports_trend: boolean;
+      supports_anomaly: boolean;
+      trend_value: number | null;
+      residual_value: number | null;
+      anomaly_score: number | null;
+      is_anomaly: boolean;
       source_table: string;
     }> = [];
 
@@ -227,6 +233,12 @@ export class CountriesService {
               rawValue == null || Number.isNaN(Number(rawValue))
                 ? null
                 : Number(rawValue),
+            supports_trend: Boolean(indicator.supports_trend),
+            supports_anomaly: Boolean(indicator.supports_anomaly),
+            trend_value: null,
+            residual_value: null,
+            anomaly_score: null,
+            is_anomaly: false,
             source_table: safeTable,
           });
         });

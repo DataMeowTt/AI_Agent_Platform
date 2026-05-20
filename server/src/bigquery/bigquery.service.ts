@@ -403,9 +403,101 @@ export class BigQueryService {
         limit: Math.min(MAX_LIMIT * 10, 5000),
       });
 
+      const analyticsIndicators = tableIndicators.filter(
+        indicator => indicator.analytics_table,
+      );
+      const analyticsByKey = new Map<string, Record<string, unknown>>();
+      if (analyticsIndicators.length > 0) {
+        const analyticsTable = analyticsIndicators[0].analytics_table;
+        const allSameAnalyticsTable = analyticsIndicators.every(
+          indicator => indicator.analytics_table === analyticsTable,
+        );
+        if (analyticsTable && allSameAnalyticsTable) {
+          const analyticsTableRef = this.getAnalyticsTableRefOrThrow(analyticsTable);
+          const analyticsColumns = Array.from(
+            new Set(
+              analyticsIndicators.flatMap(indicator => {
+                const base = this.ensureSafeIdentifier(
+                  indicator.code,
+                  'indicator code',
+                );
+                return [
+                  `${base}_trend`,
+                  `${base}_residual`,
+                  `${base}_anomaly_score`,
+                ].map(column =>
+                  this.ensureSafeIdentifier(column, 'analytics column'),
+                );
+              }),
+            ),
+          );
+          const analyticsSelectedColumns = analyticsColumns
+            .map(column => `a.${column} AS ${column}`)
+            .join(',\n          ');
+          const analyticsSql = `
+            SELECT
+              a.country_code AS country_code,
+              a.year AS year,
+              ${analyticsSelectedColumns}
+            FROM \`${analyticsTableRef}\` a
+            WHERE a.country_code = @countryCode
+            ORDER BY a.year ASC
+            LIMIT @limit
+          `;
+          const analyticsRows = await this.executeQuery<Record<string, unknown>>(
+            analyticsSql,
+            {
+              countryCode: normalizedCountryCode,
+              limit: Math.min(MAX_LIMIT * 10, 5000),
+            },
+          );
+          analyticsRows.forEach(analyticsRow => {
+            const key = `${String(analyticsRow.country_code)}-${Number(
+              analyticsRow.year,
+            )}`;
+            analyticsByKey.set(key, analyticsRow);
+          });
+        }
+      }
+
       tableRows.forEach(row => {
         tableIndicators.forEach(indicator => {
           const rawValue = row[indicator.gold_column];
+          const analyticsKey = `${String(
+            row.country_code || normalizedCountryCode,
+          )}-${Number(row.year)}`;
+          const analyticsRow = analyticsByKey.get(analyticsKey);
+          const safeIndicatorCode = this.ensureSafeIdentifier(
+            indicator.code,
+            'indicator code',
+          );
+          const trendColumn = `${safeIndicatorCode}_trend`;
+          const residualColumn = `${safeIndicatorCode}_residual`;
+          const anomalyColumn = `${safeIndicatorCode}_anomaly_score`;
+          const trendRaw =
+            indicator.supports_trend && indicator.analytics_table && analyticsRow
+              ? (analyticsRow as unknown as Record<string, unknown>)[trendColumn]
+              : null;
+          const residualRaw =
+            indicator.supports_trend && indicator.analytics_table && analyticsRow
+              ? (analyticsRow as unknown as Record<string, unknown>)[residualColumn]
+              : null;
+          const anomalyRaw =
+            indicator.supports_anomaly && indicator.analytics_table && analyticsRow
+              ? (analyticsRow as unknown as Record<string, unknown>)[anomalyColumn]
+              : null;
+          const trendValue =
+            trendRaw == null || Number.isNaN(Number(trendRaw))
+              ? null
+              : Number(trendRaw);
+          const residualValue =
+            residualRaw == null || Number.isNaN(Number(residualRaw))
+              ? null
+              : Number(residualRaw);
+          const anomalyScore =
+            anomalyRaw == null || Number.isNaN(Number(anomalyRaw))
+              ? null
+              : Number(anomalyRaw);
           rows.push({
             country_code: String(row.country_code || normalizedCountryCode),
             country: String(row.country || normalizedCountryCode),
@@ -420,6 +512,15 @@ export class BigQueryService {
                   ? null
                   : null
                 : Number(rawValue),
+            supports_trend: Boolean(indicator.supports_trend),
+            supports_anomaly: Boolean(indicator.supports_anomaly),
+            trend_value: indicator.supports_trend ? trendValue : null,
+            residual_value: indicator.supports_trend ? residualValue : null,
+            anomaly_score: indicator.supports_anomaly ? anomalyScore : null,
+            is_anomaly:
+              indicator.supports_anomaly && anomalyScore != null
+                ? anomalyScore >= 0.75
+                : false,
             source_table: tableName,
           });
         });

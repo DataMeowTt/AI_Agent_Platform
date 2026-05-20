@@ -121,6 +121,12 @@ export interface BigQueryCountryIndicatorRow {
   category: string;
   unit: string;
   value: number | null;
+  supports_trend: boolean;
+  supports_anomaly: boolean;
+  trend_value: number | null;
+  residual_value: number | null;
+  anomaly_score: number | null;
+  is_anomaly: boolean;
   source_table: string;
 }
 
