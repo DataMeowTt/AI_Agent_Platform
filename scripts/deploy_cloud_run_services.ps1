@@ -134,7 +134,7 @@ function Invoke-Health([string]$Url) {
 
 function Invoke-ChatSmoke([string]$Url) {
   $payload = @{
-    message = "So sánh nợ công Việt Nam và Thái Lan từ 2010 đến 2023"
+    message = "Compare public debt of Vietnam and Thailand from 2010 to 2023"
     conversationId = "cloud-smoke-phase14b"
   } | ConvertTo-Json -Depth 5
 
@@ -368,12 +368,17 @@ if ($SkipSmoke) {
 $agentHealth = Invoke-Health "$agentUrl/health"
 $backendAiHealth = Invoke-Health "$backendUrl/api/v1/ai/health"
 $backendChat = Invoke-ChatSmoke "$backendUrl/api/v1/ai/chat"
+$backendCompare = Invoke-Health "$backendUrl/api/v1/compare?countries=VNM,THA&indicator=govdebt_GDP&from=2010&to=2023"
+$backendCountryIndicators = Invoke-Health "$backendUrl/api/v1/countries/AFG/indicators"
 
 $smokeResult = [ordered]@{
   ai_agent_health = $agentHealth
   backend_ai_health = $backendAiHealth
   backend_chat = $backendChat
+  backend_compare = $backendCompare
+  backend_country_indicators = $backendCountryIndicators
 }
 
 Write-Host "`n=== Smoke Results (JSON) ==="
 $smokeResult | ConvertTo-Json -Depth 8
+

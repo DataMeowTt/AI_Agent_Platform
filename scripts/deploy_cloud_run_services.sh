@@ -357,5 +357,9 @@ curl -fsS "$BACKEND_URL/api/v1/ai/health"
 echo ""
 curl -fsS -X POST "$BACKEND_URL/api/v1/ai/chat" \
   -H "Content-Type: application/json" \
-  -d '{"message":"So sánh nợ công Việt Nam và Thái Lan từ 2010 đến 2023","conversationId":"cloud-smoke-phase14b"}'
+  -d '{"message":"Compare public debt of Vietnam and Thailand from 2010 to 2023","conversationId":"cloud-smoke-phase14b"}'
+echo ""
+curl -fsS "$BACKEND_URL/api/v1/compare?countries=VNM,THA&indicator=govdebt_GDP&from=2010&to=2023"
+echo ""
+curl -fsS "$BACKEND_URL/api/v1/countries/AFG/indicators"
 echo ""
