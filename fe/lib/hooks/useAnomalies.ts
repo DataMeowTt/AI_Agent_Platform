@@ -37,11 +37,12 @@ export const useAnomalies = ({
     placeholderData: keepPreviousData,
   });
 
-  const { data, isLoading, isError, error } = queryResult;
+  const { data, isLoading, isFetching, isError, error } = queryResult;
   return {
     data: data?.items || [],
     total: data?.meta.total_count ?? data?.items?.length ?? 0,
     isLoading,
+    isFetching,
     isError,
     error: error as Error | null,
     isEmpty: !isLoading && !isError && (!data || !data.items || data.items.length === 0),

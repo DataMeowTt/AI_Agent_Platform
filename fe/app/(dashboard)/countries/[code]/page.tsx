@@ -47,6 +47,8 @@ type SeriesPoint = {
   trend: number | null;
   anomaly_score: number | null;
   is_anomaly: boolean;
+  supports_trend: boolean;
+  supports_anomaly: boolean;
 };
 
 function resolveCompletenessPercent(meta?: {
@@ -101,6 +103,8 @@ export default function CountryDetailPage() {
         trend: row.trend_value ?? null,
         anomaly_score: row.anomaly_score ?? null,
         is_anomaly: row.is_anomaly === true,
+        supports_trend: row.supports_trend === true,
+        supports_anomaly: row.supports_anomaly === true,
       });
       grouped.set(row.indicator, current);
     });
@@ -131,7 +135,7 @@ export default function CountryDetailPage() {
       ? selectedIndicatorState
       : indicatorSeries.some(item => item.indicator === DEFAULT_PRIMARY_INDICATOR)
         ? DEFAULT_PRIMARY_INDICATOR
-      : (indicatorSeries[0]?.indicator ?? '');
+        : (indicatorSeries[0]?.indicator ?? '');
   const fromYear = fromYearState ?? yearBounds.min;
   const toYear = toYearState ?? yearBounds.max;
   const safeRangeFrom = Math.min(fromYear, toYear);
@@ -254,12 +258,19 @@ export default function CountryDetailPage() {
   const anomalyMarkerYears = Array.from(
     new Set(
       filteredSeriesPoints
-        .filter(point => point.is_anomaly || (point.anomaly_score ?? 0) >= 0.75)
+        .filter(
+          point =>
+            point.is_anomaly ||
+            (point.anomaly_score != null && point.anomaly_score >= 0.75),
+        )
         .map(point => point.year),
     ),
   ).sort((a, b) => a - b);
 
   const hasTrendInSeries = filteredSeriesPoints.some(point => point.trend != null);
+  const trendSupported =
+    Boolean(selectedSeries?.points.some(point => point.supports_trend)) ||
+    hasTrendInSeries;
 
   if (analyticsQuery.isLoading || countriesQuery.isLoading || indicatorsQuery.isLoading) {
     return (
@@ -426,8 +437,8 @@ export default function CountryDetailPage() {
               <>
                 <p className="font-medium text-slate-800">{selectedSeries.indicator_name}</p>
                 <p>Nhóm: {getIndicatorCategoryLabel(selectedSeries.category)}</p>
-                <p>Unit: {selectedSeries.unit || 'N/A'}</p>
-                <p>Code: {selectedSeries.indicator}</p>
+                <p>Đơn vị: {selectedSeries.unit || 'N/A'}</p>
+                <p>Mã chỉ số: {selectedSeries.indicator}</p>
               </>
             ) : (
               <p>Chưa có dữ liệu phù hợp.</p>
@@ -450,30 +461,62 @@ export default function CountryDetailPage() {
                 <XAxis dataKey="year" />
                 <YAxis width={88} tickFormatter={(value) => formatCompactNumber(typeof value === 'number' ? value : Number(value))} />
                 <Tooltip
-                  formatter={value =>
-                    formatIndicatorValue(
-                      typeof value === 'number'
-                        ? value
-                        : value == null
-                          ? null
-                          : Number(value),
-                      selectedSeries?.unit,
-                    )
-                  }
-                  labelFormatter={label => `Năm ${formatYear(label as number)}`}
+                  content={({ active, payload }) => {
+                    if (!active || !payload || payload.length === 0) return null;
+                    const row = payload[0]?.payload as SeriesPoint | undefined;
+                    if (!row) return null;
+                    return (
+                      <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs shadow-sm">
+                        <p className="font-semibold text-slate-900">Năm {formatYear(row.year)}</p>
+                        <p className="text-slate-700">
+                          Giá trị thực tế: {formatIndicatorValue(row.value, selectedSeries?.unit)}
+                        </p>
+                        {row.trend != null ? (
+                          <p className="text-slate-700">
+                            Giá trị xu hướng: {formatIndicatorValue(row.trend, selectedSeries?.unit)}
+                          </p>
+                        ) : null}
+                        {row.anomaly_score != null ? (
+                          <p className="text-slate-700">
+                            Điểm bất thường: {formatNumber(row.anomaly_score, 3)}
+                          </p>
+                        ) : null}
+                      </div>
+                    );
+                  }}
                 />
                 <Legend />
-                <Line type="monotone" dataKey="value" name="Giá trị thực tế" stroke="#1d4ed8" strokeWidth={2} dot={false} connectNulls />
+                <Line
+                  type="monotone"
+                  dataKey="value"
+                  name="Giá trị thực tế"
+                  stroke="#1d4ed8"
+                  strokeWidth={2}
+                  dot={({ cx, cy, payload }) => {
+                    const point = payload as SeriesPoint;
+                    const isAnomaly =
+                      point?.is_anomaly ||
+                      (point?.anomaly_score != null && point.anomaly_score >= 0.75);
+                    if (!isAnomaly || cx == null || cy == null) return <></>;
+                    return <circle cx={cx} cy={cy} r={3.5} fill="#b45309" stroke="#92400e" />;
+                  }}
+                  connectNulls
+                />
                 {hasTrendInSeries ? (
                   <Line type="monotone" dataKey="trend" name="Xu hướng" stroke="#475569" strokeWidth={2} strokeDasharray="4 4" dot={false} connectNulls />
                 ) : null}
                 {anomalyMarkerYears.map(year => (
-                  <ReferenceLine key={`anomaly-${year}`} x={year} stroke="#b45309" strokeDasharray="4 4" label={{ value: 'Điểm bất thường', position: 'top', fill: '#92400e', fontSize: 11 }} />
+                  <ReferenceLine key={`anomaly-${year}`} x={year} stroke="#b45309" strokeDasharray="4 4" />
                 ))}
               </LineChart>
             </ResponsiveContainer>
           </div>
         )}
+        <p className="mt-2 text-xs text-slate-600">
+          {trendSupported
+            ? 'Có đường xu hướng từ dữ liệu lịch sử'
+            : 'Chỉ hiển thị chuỗi giá trị thực tế cho chỉ số này'}
+        </p>
       </SectionCard>
 
       <SectionCard title="Bảng dữ liệu đầy đủ">
@@ -538,7 +581,15 @@ export default function CountryDetailPage() {
                   const latest = item.points.slice().reverse().find(point => point.value != null);
                   return (
                     <div key={item.indicator} className="rounded-md border border-slate-200 bg-white px-3 py-2">
-                      <p className="text-sm font-medium text-slate-900">{item.indicator_name}</p>
+                      <p className="text-sm font-medium text-slate-900">
+                        {item.indicator_name}{' '}
+                        {(item.points.some(point => point.supports_trend) ||
+                          item.points.some(point => point.trend != null)) && (
+                            <span className="ml-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+                              Có xu hướng
+                            </span>
+                          )}
+                      </p>
                       <p className="text-xs text-slate-500">{item.indicator}</p>
                       <p className="mt-1 text-sm text-slate-700">
                         {latest && latest.value != null
@@ -632,3 +683,4 @@ export default function CountryDetailPage() {
     </div>
   );
 }
+

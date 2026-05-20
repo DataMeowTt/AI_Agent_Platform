@@ -182,7 +182,7 @@ function ChatPageContent() {
                 <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded bg-slate-100 text-slate-600">
                   <MessageSquareText className="h-5 w-5" />
                 </div>
-                <h2 className="text-base font-semibold text-slate-900">Báº¯t Ä‘áº§u trao Ä‘á»•i vá»›i trá»£ lÃ½</h2>
+                <h2 className="text-base font-semibold text-slate-900">Bắt đầu trao đổi với trợ lý</h2>
                 <p className="mt-2 text-sm leading-6 text-slate-600">
                   Khuyến nghị bắt đầu bằng câu hỏi đầy đủ quốc gia, chỉ số và giai đoạn năm để tăng độ chính xác.
                 </p>

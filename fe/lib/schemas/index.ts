@@ -92,9 +92,12 @@ export const countryIndicatorRowSchema = z.object({
   category: z.string(),
   unit: z.string(),
   value: z.number().nullable(),
+  supports_trend: z.boolean().optional(),
+  supports_anomaly: z.boolean().optional(),
   trend_value: z.number().nullable().optional(),
+  residual_value: z.number().nullable().optional(),
   anomaly_score: z.number().nullable().optional(),
-  is_anomaly: z.boolean().nullable().optional(),
+  is_anomaly: z.boolean().optional(),
   source_table: z.string(),
 });
 

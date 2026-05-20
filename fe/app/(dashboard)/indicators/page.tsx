@@ -94,24 +94,24 @@ export default function IndicatorsPage() {
           <table className="min-w-full divide-y divide-slate-200 text-sm">
             <thead className="bg-slate-50">
               <tr>
-                <th className="px-4 py-3 text-left font-semibold">Tên chỉ số</th>
-                <th className="px-4 py-3 text-left font-semibold">Đơn vị</th>
-                <th className="px-4 py-3 text-left font-semibold">Nhóm</th>
-                <th className="px-4 py-3 text-left font-semibold">Khả năng phân tích</th>
-                <th className="px-4 py-3 text-right font-semibold">Thao tác</th>
+                <th className="px-2 py-3 text-left font-semibold">Tên chỉ số</th>
+                <th className="px-2 py-3 text-left font-semibold">Đơn vị</th>
+                <th className="px-2 py-3 text-left font-semibold">Nhóm</th>
+                <th className="px-2 py-3 text-left font-semibold">Khả năng phân tích</th>
+                <th className="px-2 py-3 text-right font-semibold">Thao tác</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 bg-white">
               {filtered.map((item) => (
                 <tr key={item.code} className="hover:bg-slate-50">
-                  <td className="px-4 py-3">
+                  <td className="px-2 py-3">
                     <p className="font-medium text-slate-900">{item.name}</p>
                     <p className="text-xs text-slate-500">{item.code}</p>
                     {item.description_vi ? <p className="mt-1 text-xs text-slate-600">{item.description_vi}</p> : null}
                   </td>
-                  <td className="px-4 py-3">{item.unit || 'Chưa công bố'}</td>
-                  <td className="px-4 py-3">{getIndicatorCategoryLabel(item.category)}</td>
-                  <td className="px-4 py-3 text-xs text-slate-700">
+                  <td className="px-2 py-3">{item.unit || 'Chưa công bố'}</td>
+                  <td className="px-2 py-3">{getIndicatorCategoryLabel(item.category)}</td>
+                  <td className="px-2 py-3 text-xs text-slate-700">
                     {[
                       item.supports_compare ? 'So sánh' : null,
                       item.supports_trend ? 'Xu hướng' : null,
@@ -121,7 +121,7 @@ export default function IndicatorsPage() {
                       .filter(Boolean)
                       .join(', ') || 'Đang cập nhật'}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-2 py-3">
                     <div className="flex justify-end gap-2">
                       <Link
                         href={`/compare?countries=VNM,THA&indicator=${item.code}&from=2010&to=2023`}

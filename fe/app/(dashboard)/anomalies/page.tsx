@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense, useMemo, useState } from 'react';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, Loader2 } from 'lucide-react';
 import PageHeader from '@/components/ui/PageHeader';
 import FilterBar from '@/components/ui/FilterBar';
 import StateBlock from '@/components/ui/StateBlock';
@@ -40,7 +40,7 @@ function AnomaliesPageContent() {
 
   const countriesQuery = useCountries();
   const indicatorsQuery = useIndicators();
-  const { data, total, isLoading, isError, error, isEmpty } = useAnomalies({
+  const { data, total, isLoading, isFetching, isError, error, isEmpty } = useAnomalies({
     country: country || undefined,
     indicator: indicator || undefined,
     threshold,
@@ -198,7 +198,17 @@ function AnomaliesPageContent() {
 
       {!isLoading && !isError && !isEmpty ? (
         <>
-          <AnomaliesTable data={data || []} />
+          <div className="relative">
+            <AnomaliesTable data={data || []} />
+            {isFetching ? (
+              <div className="absolute inset-0 z-10 flex items-center justify-center rounded-md bg-white/70 backdrop-blur-[1px]">
+                <div className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading...
+                </div>
+              </div>
+            ) : null}
+          </div>
           <Pagination
             currentPage={safePage}
             totalPages={totalPages}
