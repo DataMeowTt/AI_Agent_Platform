@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { BigQuery } from '@google-cloud/bigquery';
 import { BigQueryCacheService } from './bigquery-cache.service';
@@ -7,10 +7,19 @@ import {
   BigQueryAnomalyItem,
   BigQueryClusterItem,
   BigQueryClusterBenchmarkResponse,
-  BigQueryCountryItem,
+  BigQueryCompareParams,
+  BigQueryCompareRow,
   BigQueryCountryAnalyticsResponse,
   BigQueryCountryAnalyticsRow,
+  BigQueryCountryIndicatorRow,
+  BigQueryCountryIndicatorsResponse,
+  BigQueryCountryItem,
 } from './bigquery.types';
+import {
+  GeneratedIndicatorContract,
+  getIndicator,
+  listIndicators,
+} from '../generated/indicator-contract';
 
 const DEFAULT_PROJECT_ID = 'western-pivot-452008-a6';
 const DEFAULT_LOCATION = 'asia-southeast1';
@@ -19,9 +28,17 @@ const DEFAULT_ANALYTICS_DATASET = 'gov_ai_analytics';
 const DEFAULT_MAX_BYTES_BILLED = 100000000;
 const DEFAULT_CACHE_TTL_SECONDS = 300;
 const MAX_LIMIT = 100;
+const SUPPORTED_CANONICAL_ANOMALY_CODES = new Set([
+  'rGDP_growth_YoY',
+  'govdebt_GDP',
+  'REER_deviation',
+]);
 
 type BigQueryTables = {
   goldGrowthDynamics: string;
+  goldFiscalMonetary: string;
+  goldSocialWelfare: string;
+  goldCrisisRisk: string;
   goldStructuralComposition: string;
   analyticsClusters: string;
   analyticsGoldGrowthDynamics: string;
@@ -29,6 +46,16 @@ type BigQueryTables = {
   analyticsGoldSocialWelfare: string;
   analyticsGoldStructuralComposition: string;
   analyticsGoldCrisisRisk: string;
+};
+
+const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const ANOMALY_ALIAS_MAP: Record<string, string> = {
+  growth: 'rGDP_growth_YoY',
+  rgdp_growth_yoy: 'rGDP_growth_YoY',
+  govdebt: 'govdebt_GDP',
+  govdebt_gdp: 'govdebt_GDP',
+  reer: 'REER_deviation',
+  reer_deviation: 'REER_deviation',
 };
 
 @Injectable()
@@ -42,6 +69,24 @@ export class BigQueryService {
   private readonly client: BigQuery;
   private readonly tables: BigQueryTables;
   private readonly whitelistedTables: Set<string>;
+  private readonly indicators = listIndicators();
+  private readonly indicatorsByCode = new Map<string, GeneratedIndicatorContract>(
+    this.indicators.map(indicator => [indicator.code, indicator]),
+  );
+  private readonly anomalyIndicatorsByCode = new Map<
+    string,
+    GeneratedIndicatorContract
+  >(
+    this.indicators
+      .filter(
+        indicator =>
+          SUPPORTED_CANONICAL_ANOMALY_CODES.has(indicator.code) &&
+          indicator.supports_anomaly &&
+          indicator.analytics_table &&
+          indicator.gold_column,
+      )
+      .map(indicator => [indicator.code, indicator]),
+  );
 
   constructor(
     private readonly configService: ConfigService,
@@ -71,6 +116,15 @@ export class BigQueryService {
         this.goldDataset,
         'gold_growth_dynamics',
       ),
+      goldFiscalMonetary: this.buildTableRef(
+        this.goldDataset,
+        'gold_fiscal_monetary',
+      ),
+      goldSocialWelfare: this.buildTableRef(
+        this.goldDataset,
+        'gold_social_welfare',
+      ),
+      goldCrisisRisk: this.buildTableRef(this.goldDataset, 'gold_crisis_risk'),
       goldStructuralComposition: this.buildTableRef(
         this.goldDataset,
         'gold_structural_composition',
@@ -103,6 +157,9 @@ export class BigQueryService {
 
     this.whitelistedTables = new Set<string>([
       this.tables.goldGrowthDynamics,
+      this.tables.goldFiscalMonetary,
+      this.tables.goldSocialWelfare,
+      this.tables.goldCrisisRisk,
       this.tables.goldStructuralComposition,
       this.tables.analyticsClusters,
       this.tables.analyticsGoldGrowthDynamics,
@@ -111,6 +168,19 @@ export class BigQueryService {
       this.tables.analyticsGoldStructuralComposition,
       this.tables.analyticsGoldCrisisRisk,
     ]);
+
+    this.indicators.forEach(indicator => {
+      if (indicator.gold_table) {
+        this.whitelistedTables.add(
+          this.buildTableRef(this.goldDataset, indicator.gold_table),
+        );
+      }
+      if (indicator.analytics_table) {
+        this.whitelistedTables.add(
+          this.buildTableRef(this.analyticsDataset, indicator.analytics_table),
+        );
+      }
+    });
 
     this.client = new BigQuery({ projectId: this.projectId });
   }
@@ -134,7 +204,7 @@ export class BigQueryService {
         region
       FROM ranked
       WHERE rn = 1
-      ORDER BY country_name ASC
+      ORDER BY country_name ASC, country_code ASC
       LIMIT @limit
     `;
     return this.executeQuery<BigQueryCountryItem>(sql, { limit: MAX_LIMIT });
@@ -189,20 +259,224 @@ export class BigQueryService {
     });
 
     const latestRow = rows.length > 0 ? rows[rows.length - 1] : undefined;
-    const completeness =
+    const completenessRatio =
       rows.length > 0
-        ? rows.reduce((sum, row) => sum + (Number(row.completeness_score) || 0), 0) / rows.length
-        : 0;
+        ? rows.reduce((sum, row) => {
+            const normalized = this.normalizeCompletenessRatio(
+              row.completeness_score,
+            );
+            return sum + (normalized ?? 0);
+          }, 0) / rows.length
+        : null;
+    const completenessPercent =
+      completenessRatio == null
+        ? null
+        : Number((completenessRatio * 100).toFixed(2));
     const responseRows = rows.map(({ completeness_score, flag_score, ...row }) => row);
 
     return {
       meta: {
         country_code: normalizedCountryCode,
-        data_completeness: Math.round(completeness),
+        data_completeness_ratio:
+          completenessRatio == null ? null : Number(completenessRatio.toFixed(4)),
+        data_completeness_percent: completenessPercent,
+        data_completeness: completenessPercent ?? 0,
         flag_score: Number(latestRow?.flag_score || 0),
         latest_year: latestRow ? Number(latestRow.year) : null,
       },
       data: responseRows,
+    };
+  }
+
+  async getCompareRows(params: BigQueryCompareParams): Promise<BigQueryCompareRow[]> {
+    const indicator = this.getComparableIndicatorOrThrow(params.indicator);
+    const countries = Array.from(
+      new Set(
+        (params.countries || [])
+          .map(code => this.normalizeCountryCode(code))
+          .filter((code): code is string => Boolean(code)),
+      ),
+    );
+
+    if (countries.length === 0) {
+      return [];
+    }
+
+    const minYear = this.parseYear(params.from);
+    const maxYear = this.parseYear(params.to);
+    const [fromYear, toYear] =
+      minYear != null && maxYear != null && minYear > maxYear
+        ? [maxYear, minYear]
+        : [minYear, maxYear];
+
+    const tableRef = this.getGoldTableRefOrThrow(indicator.gold_table);
+    const column = this.ensureSafeIdentifier(indicator.gold_column, 'indicator column');
+
+    const sql = `
+      SELECT
+        g.country_code AS country_code,
+        COALESCE(g.country, g.country_code) AS country,
+        g.year AS year,
+        @indicator AS indicator,
+        @indicatorName AS indicator_name,
+        @category AS category,
+        @unit AS unit,
+        g.${column} AS value
+      FROM \`${tableRef}\` g
+      WHERE g.country_code IN UNNEST(@countries)
+        AND (@fromYear IS NULL OR g.year >= @fromYear)
+        AND (@toYear IS NULL OR g.year <= @toYear)
+      ORDER BY g.year ASC, g.country_code ASC
+      LIMIT @limit
+    `;
+
+    const rows = await this.executeQuery<BigQueryCompareRow>(sql, {
+      countries,
+      fromYear,
+      toYear,
+      indicator: indicator.code,
+      indicatorName: indicator.name_vi || indicator.name_en || indicator.code,
+      category: indicator.category,
+      unit: indicator.unit || '',
+      limit: Math.min(MAX_LIMIT * 10, 2000),
+    });
+
+    return rows.map(row => ({
+      ...row,
+      year: Number(row.year),
+      value: row.value == null ? null : Number(row.value),
+    }));
+  }
+
+  async getCountryIndicators(
+    countryCode: string,
+  ): Promise<BigQueryCountryIndicatorsResponse> {
+    const normalizedCountryCode = this.normalizeCountryCode(countryCode);
+    if (!normalizedCountryCode) {
+      throw new BadRequestException('Mã quốc gia không hợp lệ. Yêu cầu mã ISO3.');
+    }
+
+    const eligibleIndicators = this.indicators.filter(
+      indicator =>
+        indicator.supports_raw &&
+        indicator.gold_table &&
+        indicator.gold_column &&
+        indicator.code !== 'decade' &&
+        indicator.code !== 'flag_score' &&
+        indicator.code !== 'completeness_score',
+    );
+
+    const indicatorsByTable = new Map<string, GeneratedIndicatorContract[]>();
+    eligibleIndicators.forEach(indicator => {
+      const table = indicator.gold_table as string;
+      if (!indicatorsByTable.has(table)) {
+        indicatorsByTable.set(table, []);
+      }
+      indicatorsByTable.get(table)!.push(indicator);
+    });
+
+    const rows: BigQueryCountryIndicatorRow[] = [];
+    for (const [tableName, tableIndicators] of indicatorsByTable.entries()) {
+      const tableRef = this.getGoldTableRefOrThrow(tableName);
+      const safeColumns = tableIndicators.map(indicator =>
+        this.ensureSafeIdentifier(indicator.gold_column, 'indicator column'),
+      );
+      const distinctColumns = Array.from(new Set(safeColumns));
+      const selectedColumns = distinctColumns
+        .map(column => `g.${column} AS ${column}`)
+        .join(',\n        ');
+
+      const sql = `
+        SELECT
+          g.country_code AS country_code,
+          COALESCE(g.country, g.country_code) AS country,
+          g.year AS year,
+          ${selectedColumns}
+        FROM \`${tableRef}\` g
+        WHERE g.country_code = @countryCode
+        ORDER BY g.year ASC
+        LIMIT @limit
+      `;
+
+      const tableRows = await this.executeQuery<Record<string, unknown>>(sql, {
+        countryCode: normalizedCountryCode,
+        limit: Math.min(MAX_LIMIT * 10, 5000),
+      });
+
+      tableRows.forEach(row => {
+        tableIndicators.forEach(indicator => {
+          const rawValue = row[indicator.gold_column];
+          rows.push({
+            country_code: String(row.country_code || normalizedCountryCode),
+            country: String(row.country || normalizedCountryCode),
+            year: Number(row.year),
+            indicator: indicator.code,
+            indicator_name: indicator.name_vi || indicator.name_en || indicator.code,
+            category: indicator.category,
+            unit: indicator.unit || '',
+            value:
+              rawValue == null || Number.isNaN(Number(rawValue))
+                ? rawValue == null
+                  ? null
+                  : null
+                : Number(rawValue),
+            source_table: tableName,
+          });
+        });
+      });
+    }
+
+    const orderedRows = rows.sort((a, b) => {
+      if (a.indicator !== b.indicator) {
+        return a.indicator.localeCompare(b.indicator);
+      }
+      return a.year - b.year;
+    });
+
+    const summaryByIndicator = new Map<
+      string,
+      {
+        total: number;
+        nonNull: number;
+        latestYear: number | null;
+        latestValue: number | null;
+      }
+    >();
+
+    orderedRows.forEach(row => {
+      const current = summaryByIndicator.get(row.indicator) || {
+        total: 0,
+        nonNull: 0,
+        latestYear: null,
+        latestValue: null,
+      };
+      current.total += 1;
+      if (row.value != null) {
+        current.nonNull += 1;
+        if (current.latestYear == null || row.year >= current.latestYear) {
+          current.latestYear = row.year;
+          current.latestValue = row.value;
+        }
+      }
+      summaryByIndicator.set(row.indicator, current);
+    });
+
+    const summary = Array.from(summaryByIndicator.entries())
+      .map(([indicator, value]) => ({
+        indicator,
+        latest_non_null_year: value.latestYear,
+        latest_non_null_value: value.latestValue,
+        coverage_ratio:
+          value.total === 0
+            ? 0
+            : Number((value.nonNull / value.total).toFixed(4)),
+      }))
+      .sort((a, b) => a.indicator.localeCompare(b.indicator));
+
+    return {
+      country_code: normalizedCountryCode,
+      rows: orderedRows,
+      summary,
     };
   }
 
@@ -333,13 +607,22 @@ export class BigQueryService {
       params.indicator !== undefined &&
       params.indicator !== null &&
       params.indicator.trim() !== '';
-    const normalizedIndicator = this.normalizeIndicator(params.indicator);
+    const normalizedIndicator = this.normalizeAnomalyIndicator(params.indicator);
     const normalizedCountryCode = this.normalizeCountryCode(params.countryCode);
     const threshold = this.clampNumber(params.threshold, 0, 1, 0.75);
     const limit = this.clampNumber(params.limit, 1, MAX_LIMIT, 15);
     const offset = this.clampNumber(params.offset, 0, Number.MAX_SAFE_INTEGER, 0);
 
     if (hasIndicatorFilter && !normalizedIndicator) {
+      throw new BadRequestException(
+        'Chỉ số anomaly không hỗ trợ. Hãy dùng mã canonical như rGDP_growth_YoY, govdebt_GDP, REER_deviation.',
+      );
+    }
+
+    const selectedIndicators = normalizedIndicator
+      ? [this.anomalyIndicatorsByCode.get(normalizedIndicator)!]
+      : Array.from(this.anomalyIndicatorsByCode.values());
+    if (selectedIndicators.length === 0) {
       return {
         items: [],
         meta: { total_count: 0, limit, offset },
@@ -350,63 +633,39 @@ export class BigQueryService {
     const countryFilterSql = normalizedCountryCode
       ? 'AND a.country_code = @countryCode'
       : '';
-    if (!normalizedIndicator || normalizedIndicator === 'growth') {
+
+    selectedIndicators.forEach(indicator => {
+      const analyticsTableRef = this.getAnalyticsTableRefOrThrow(
+        indicator.analytics_table,
+      );
+      const baseColumn = this.ensureSafeIdentifier(
+        indicator.gold_column,
+        'indicator column',
+      );
+      const actualColumn = this.ensureSafeIdentifier(
+        `${baseColumn}_actual`,
+        'actual column',
+      );
+      const anomalyColumn = this.ensureSafeIdentifier(
+        `${baseColumn}_anomaly_score`,
+        'anomaly score column',
+      );
+
       anomalyBranches.push(`
         SELECT
           a.country_code AS country_code,
           a.year AS year,
-          'rGDP_growth_YoY' AS indicator,
-          a.rGDP_growth_YoY_actual AS actual_value,
-          a.rGDP_growth_YoY_anomaly_score AS anomaly_score,
+          '${indicator.code}' AS indicator,
+          a.${actualColumn} AS actual_value,
+          a.${anomalyColumn} AS anomaly_score,
           g.country AS country_name
-        FROM \`${this.tables.analyticsGoldGrowthDynamics}\` a
+        FROM \`${analyticsTableRef}\` a
         LEFT JOIN \`${this.tables.goldGrowthDynamics}\` g
           ON g.country_code = a.country_code AND g.year = a.year
-        WHERE a.rGDP_growth_YoY_anomaly_score BETWEEN @threshold AND 1
+        WHERE a.${anomalyColumn} BETWEEN @threshold AND 1
           ${countryFilterSql}
       `);
-    }
-
-    if (!normalizedIndicator || normalizedIndicator === 'govdebt') {
-      anomalyBranches.push(`
-        SELECT
-          a.country_code AS country_code,
-          a.year AS year,
-          'govdebt_GDP' AS indicator,
-          a.govdebt_GDP_actual AS actual_value,
-          a.govdebt_GDP_anomaly_score AS anomaly_score,
-          g.country AS country_name
-        FROM \`${this.tables.analyticsGoldFiscalMonetary}\` a
-        LEFT JOIN \`${this.tables.goldGrowthDynamics}\` g
-          ON g.country_code = a.country_code AND g.year = a.year
-        WHERE a.govdebt_GDP_anomaly_score BETWEEN @threshold AND 1
-          ${countryFilterSql}
-      `);
-    }
-
-    if (!normalizedIndicator || normalizedIndicator === 'reer') {
-      anomalyBranches.push(`
-        SELECT
-          a.country_code AS country_code,
-          a.year AS year,
-          'REER_deviation' AS indicator,
-          a.REER_deviation_actual AS actual_value,
-          a.REER_deviation_anomaly_score AS anomaly_score,
-          g.country AS country_name
-        FROM \`${this.tables.analyticsGoldCrisisRisk}\` a
-        LEFT JOIN \`${this.tables.goldGrowthDynamics}\` g
-          ON g.country_code = a.country_code AND g.year = a.year
-        WHERE a.REER_deviation_anomaly_score BETWEEN @threshold AND 1
-          ${countryFilterSql}
-      `);
-    }
-
-    if (anomalyBranches.length === 0) {
-      return {
-        items: [],
-        meta: { total_count: 0, limit, offset },
-      };
-    }
+    });
 
     const sql = `
       WITH anomaly_raw AS (
@@ -446,7 +705,7 @@ export class BigQueryService {
         country_name,
         COUNT(*) OVER() AS total_count
       FROM ranked
-      ORDER BY anomaly_score DESC
+      ORDER BY anomaly_score DESC, year DESC
       LIMIT @limit
       OFFSET @offset
     `;
@@ -472,8 +731,9 @@ export class BigQueryService {
         country_code: row.country_code,
         year: Number(row.year),
         indicator: row.indicator,
-        actual_value: row.actual_value,
-        anomaly_score: row.anomaly_score,
+        actual_value: row.actual_value == null ? null : Number(row.actual_value),
+        anomaly_score:
+          row.anomaly_score == null ? null : Number(row.anomaly_score),
         country_name: row.country_name,
       })),
       meta: {
@@ -486,6 +746,59 @@ export class BigQueryService {
 
   private buildTableRef(dataset: string, table: string): string {
     return `${this.projectId}.${dataset}.${table}`;
+  }
+
+  private getGoldTableRefOrThrow(tableName: string | null): string {
+    if (!tableName) {
+      throw new BadRequestException('Chỉ số không có bảng Gold hợp lệ.');
+    }
+    const safeTable = this.ensureSafeIdentifier(tableName, 'gold table');
+    const tableRef = this.buildTableRef(this.goldDataset, safeTable);
+    if (!this.whitelistedTables.has(tableRef)) {
+      throw new BadRequestException(`Bảng Gold không được phép truy vấn: ${safeTable}`);
+    }
+    return tableRef;
+  }
+
+  private getAnalyticsTableRefOrThrow(tableName: string | null): string {
+    if (!tableName) {
+      throw new BadRequestException('Chỉ số không có bảng Analytics hợp lệ.');
+    }
+    const safeTable = this.ensureSafeIdentifier(tableName, 'analytics table');
+    const tableRef = this.buildTableRef(this.analyticsDataset, safeTable);
+    if (!this.whitelistedTables.has(tableRef)) {
+      throw new BadRequestException(
+        `Bảng Analytics không được phép truy vấn: ${safeTable}`,
+      );
+    }
+    return tableRef;
+  }
+
+  private getComparableIndicatorOrThrow(
+    indicatorCode: string,
+  ): GeneratedIndicatorContract {
+    const contract = getIndicator(indicatorCode);
+    if (!contract) {
+      throw new BadRequestException(`Chỉ số không tồn tại trong contract: ${indicatorCode}`);
+    }
+    if (
+      !contract.supports_compare ||
+      !contract.supports_raw ||
+      !contract.gold_table ||
+      !contract.gold_column
+    ) {
+      throw new BadRequestException(
+        `Chỉ số ${indicatorCode} chưa hỗ trợ so sánh theo contract hiện tại.`,
+      );
+    }
+    return contract;
+  }
+
+  private ensureSafeIdentifier(input: string, label: string): string {
+    if (!SAFE_IDENTIFIER_PATTERN.test(input)) {
+      throw new BadRequestException(`${label} không hợp lệ: ${input}`);
+    }
+    return input;
   }
 
   private async executeQuery<T>(
@@ -543,21 +856,22 @@ export class BigQueryService {
     return Math.min(max, Math.max(min, normalized));
   }
 
-  private normalizeIndicator(indicator?: string): 'growth' | 'govdebt' | 'reer' | undefined {
+  private normalizeAnomalyIndicator(indicator?: string): string | undefined {
     if (!indicator) {
       return undefined;
     }
 
+    const canonicalByCode = this.anomalyIndicatorsByCode.get(indicator.trim());
+    if (canonicalByCode) {
+      return canonicalByCode.code;
+    }
+
     const normalized = indicator.trim().toLowerCase();
-    if (normalized === 'growth') {
-      return 'growth';
+    const aliasResolved = ANOMALY_ALIAS_MAP[normalized];
+    if (aliasResolved && this.anomalyIndicatorsByCode.has(aliasResolved)) {
+      return aliasResolved;
     }
-    if (normalized === 'govdebt') {
-      return 'govdebt';
-    }
-    if (normalized === 'reer') {
-      return 'reer';
-    }
+
     return undefined;
   }
 
@@ -567,6 +881,40 @@ export class BigQueryService {
     }
 
     const normalized = countryCode.trim().toUpperCase();
-    return normalized === '' ? undefined : normalized;
+    if (!/^[A-Z]{3}$/.test(normalized)) {
+      return undefined;
+    }
+    return normalized;
+  }
+
+  private parseYear(value?: number): number | null {
+    if (value == null) {
+      return null;
+    }
+    const year = Number(value);
+    if (!Number.isFinite(year)) {
+      return null;
+    }
+    return Math.trunc(year);
+  }
+
+  private normalizeCompletenessRatio(value?: number | null): number | null {
+    if (value == null) {
+      return null;
+    }
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return null;
+    }
+    if (numeric < 0) {
+      return 0;
+    }
+    if (numeric <= 1) {
+      return numeric;
+    }
+    if (numeric <= 100) {
+      return numeric / 100;
+    }
+    return 1;
   }
 }

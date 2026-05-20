@@ -55,6 +55,8 @@ export interface BigQueryCountryAnalyticsResponse {
   meta: {
     country_code: string;
     data_completeness: number;
+    data_completeness_ratio?: number | null;
+    data_completeness_percent?: number | null;
     flag_score: number;
     latest_year: number | null;
   };
@@ -90,4 +92,47 @@ export interface BigQueryClusterBenchmarkResponse {
   year: number;
   average: number;
   members: BigQueryClusterBenchmarkMember[];
+}
+
+export interface BigQueryCompareParams {
+  countries: string[];
+  indicator: string;
+  from?: number;
+  to?: number;
+}
+
+export interface BigQueryCompareRow {
+  country_code: string;
+  country: string;
+  year: number;
+  indicator: string;
+  indicator_name: string;
+  category: string;
+  unit: string;
+  value: number | null;
+}
+
+export interface BigQueryCountryIndicatorRow {
+  country_code: string;
+  country: string;
+  year: number;
+  indicator: string;
+  indicator_name: string;
+  category: string;
+  unit: string;
+  value: number | null;
+  source_table: string;
+}
+
+export interface BigQueryCountryIndicatorSummary {
+  indicator: string;
+  latest_non_null_year: number | null;
+  latest_non_null_value: number | null;
+  coverage_ratio: number;
+}
+
+export interface BigQueryCountryIndicatorsResponse {
+  country_code: string;
+  rows: BigQueryCountryIndicatorRow[];
+  summary: BigQueryCountryIndicatorSummary[];
 }

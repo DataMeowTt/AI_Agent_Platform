@@ -1,4 +1,9 @@
-import { Injectable, InternalServerErrorException, Optional } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  InternalServerErrorException,
+  Optional,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
 import { Repository, Between } from 'typeorm';
@@ -8,6 +13,7 @@ import { AnalyticsGoldFiscalMonetary } from '../entities/analytics-gold-fiscal-m
 import { AnalyticsGoldCrisisRisk } from '../entities/analytics-gold-crisis-risk.entity';
 import { GoldGrowthDynamics } from '../entities/gold-growth-dynamics.entity';
 import { BigQueryService } from '../bigquery/bigquery.service';
+import { getIndicator } from '../generated/indicator-contract';
 
 export interface AnomalyItem {
   country_code: string;
@@ -68,6 +74,13 @@ export class AnalyticsService {
       });
     }
 
+    const normalizedIndicator = this.normalizeAnomalyIndicator(indicator);
+    if (indicator && !normalizedIndicator) {
+      throw new BadRequestException(
+        'Chỉ số anomaly không hỗ trợ. Hãy dùng mã canonical như rGDP_growth_YoY, govdebt_GDP, REER_deviation.',
+      );
+    }
+
     const whereBase = { ...(countryCode && { country_code: countryCode }) };
 
     const [growthAnomalies] = await this.getGrowthAnalyticsRepo().findAndCount({
@@ -84,13 +97,13 @@ export class AnalyticsService {
     });
 
     const anomalySources: AnomalyItem[] = [];
-    if (!indicator || indicator === 'growth') {
+    if (!normalizedIndicator || normalizedIndicator === 'rGDP_growth_YoY') {
       growthAnomalies.forEach(a => anomalySources.push({ country_code: a.country_code, year: a.year, indicator: 'rGDP_growth_YoY', actual_value: a.rGDP_growth_YoY_actual, anomaly_score: a.rGDP_growth_YoY_anomaly_score }));
     }
-    if (!indicator || indicator === 'govdebt') {
+    if (!normalizedIndicator || normalizedIndicator === 'govdebt_GDP') {
       debtAnomalies.forEach(a => anomalySources.push({ country_code: a.country_code, year: a.year, indicator: 'govdebt_GDP', actual_value: a.govdebt_GDP_actual, anomaly_score: a.govdebt_GDP_anomaly_score }));
     }
-    if (!indicator || indicator === 'reer') {
+    if (!normalizedIndicator || normalizedIndicator === 'REER_deviation') {
       reerAnomalies.forEach(a => anomalySources.push({ country_code: a.country_code, year: a.year, indicator: 'REER_deviation', actual_value: a.REER_deviation_actual, anomaly_score: a.REER_deviation_anomaly_score }));
     }
 
@@ -172,5 +185,28 @@ export class AnalyticsService {
       );
     }
     return this.growthRepo;
+  }
+
+  private normalizeAnomalyIndicator(indicator?: string): string | undefined {
+    if (!indicator) {
+      return undefined;
+    }
+
+    const direct = getIndicator(indicator);
+    if (direct?.supports_anomaly) {
+      return direct.code;
+    }
+
+    const normalized = indicator.trim().toLowerCase();
+    if (normalized === 'growth' || normalized === 'rgdp_growth_yoy') {
+      return 'rGDP_growth_YoY';
+    }
+    if (normalized === 'govdebt' || normalized === 'govdebt_gdp') {
+      return 'govdebt_GDP';
+    }
+    if (normalized === 'reer' || normalized === 'reer_deviation') {
+      return 'REER_deviation';
+    }
+    return undefined;
   }
 }

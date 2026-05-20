@@ -5,6 +5,7 @@ import { CountriesModule } from './countries/countries.module';
 import { IndicatorsModule } from './indicators/indicators.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { AiChatModule } from './ai-chat/ai-chat.module';
+import { CompareModule } from './compare/compare.module';
 
 function createDatabaseModule(): DynamicModule | undefined {
   const dataSource = process.env.BACKEND_DATA_SOURCE;
@@ -40,7 +41,8 @@ const databaseModule = createDatabaseModule();
     CountriesModule,
     IndicatorsModule,
     AnalyticsModule,
-    AiChatModule
+    AiChatModule,
+    CompareModule,
   ],
   controllers: [],
   providers: [],
