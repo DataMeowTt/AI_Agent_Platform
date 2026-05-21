@@ -95,6 +95,34 @@ describe('BigQueryService', () => {
     expect(result.items[0].indicator).toBe('govdebt_GDP');
   });
 
+  it('returns trend_value in compare rows when available', async () => {
+    mockQuery.mockResolvedValue([
+      [
+        {
+          country_code: 'VNM',
+          country: 'Vietnam',
+          year: 2020,
+          indicator: 'govdebt_GDP',
+          indicator_name: 'Nợ công/GDP',
+          category: 'fiscal_monetary',
+          unit: '%',
+          value: 55.2,
+          trend_value: 53.9,
+        },
+      ],
+    ]);
+
+    const rows = await service.getCompareRows({
+      countries: ['VNM'],
+      indicator: 'govdebt_GDP',
+      from: 2010,
+      to: 2023,
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].trend_value).toBe(53.9);
+  });
+
   it('country indicators query excludes technical columns', async () => {
     mockQuery.mockResolvedValue([[]]);
 

@@ -110,6 +110,7 @@ export interface BigQueryCompareRow {
   category: string;
   unit: string;
   value: number | null;
+  trend_value?: number | null;
 }
 
 export interface BigQueryCountryIndicatorRow {

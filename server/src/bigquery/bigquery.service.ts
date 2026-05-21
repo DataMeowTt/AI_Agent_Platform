@@ -311,6 +311,15 @@ export class BigQueryService {
 
     const tableRef = this.getGoldTableRefOrThrow(indicator.gold_table);
     const column = this.ensureSafeIdentifier(indicator.gold_column, 'indicator column');
+    const canUseTrend =
+      Boolean(indicator.supports_trend) && Boolean(indicator.analytics_table);
+    const trendSql = canUseTrend
+      ? `a.${this.ensureSafeIdentifier(`${indicator.code}_trend`, 'trend column')}`
+      : 'CAST(NULL AS FLOAT64)';
+    const analyticsJoinSql = canUseTrend
+      ? `LEFT JOIN \`${this.getAnalyticsTableRefOrThrow(indicator.analytics_table)}\` a
+        ON g.country_code = a.country_code AND g.year = a.year`
+      : '';
 
     const sql = `
       SELECT
@@ -321,8 +330,10 @@ export class BigQueryService {
         @indicatorName AS indicator_name,
         @category AS category,
         @unit AS unit,
-        g.${column} AS value
+        g.${column} AS value,
+        ${trendSql} AS trend_value
       FROM \`${tableRef}\` g
+      ${analyticsJoinSql}
       WHERE g.country_code IN UNNEST(@countries)
         AND (@fromYear IS NULL OR g.year >= @fromYear)
         AND (@toYear IS NULL OR g.year <= @toYear)
@@ -345,6 +356,7 @@ export class BigQueryService {
       ...row,
       year: Number(row.year),
       value: row.value == null ? null : Number(row.value),
+      trend_value: row.trend_value == null ? null : Number(row.trend_value),
     }));
   }
 
