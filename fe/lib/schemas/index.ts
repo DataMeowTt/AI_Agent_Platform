@@ -81,6 +81,7 @@ export const compareRowSchema = z.object({
   category: z.string(),
   unit: z.string(),
   value: z.number().nullable(),
+  trend_value: z.number().nullable().optional(),
 });
 
 export const countryIndicatorRowSchema = z.object({

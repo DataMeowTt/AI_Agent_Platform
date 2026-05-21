@@ -30,7 +30,11 @@ export const useCompare = (
   const grouped: CompareGroupedData = {};
   (compareQuery.data || []).forEach(item => {
     if (!grouped[item.country_code]) grouped[item.country_code] = [];
-    grouped[item.country_code].push({ year: item.year, value: item.value });
+    grouped[item.country_code].push({
+      year: item.year,
+      value: item.value,
+      trend_value: item.trend_value ?? null,
+    });
   });
 
   const meta = indicators?.find(i => i.code === indicator);

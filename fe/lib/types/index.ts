@@ -88,6 +88,7 @@ export interface CountryAnalyticsRow {
 export interface CompareDataPoint {
   year: number;
   value: number | null;
+  trend_value?: number | null;
 }
 
 export interface CompareGroupedData {
@@ -103,6 +104,7 @@ export interface CompareRow {
   category: string;
   unit: string;
   value: number | null;
+  trend_value?: number | null;
 }
 
 export interface CountryIndicatorRow {

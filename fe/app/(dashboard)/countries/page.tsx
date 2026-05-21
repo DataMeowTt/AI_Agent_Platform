@@ -10,6 +10,7 @@ import StateBlock from '@/components/ui/StateBlock';
 import { TableSkeleton } from '@/components/ui/Skeletons';
 import { useCountries } from '@/lib/hooks/useCountries';
 import type { Country } from '@/lib/types';
+import { buildCompareCountries } from '@/lib/utils/compare';
 
 export default function CountriesPage() {
   const { data, isLoading, isError, error } = useCountries();
@@ -100,7 +101,7 @@ export default function CountriesPage() {
                         Xem hồ sơ
                       </Link>
                       <Link
-                        href={`/compare?countries=${country.country_code},THA&indicator=govdebt_GDP&from=2010&to=2023`}
+                        href={`/compare?countries=${buildCompareCountries(country.country_code).join(',')}&indicator=govdebt_GDP&from=2010&to=2023`}
                         className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
                       >
                         <Plus className="h-3 w-3" />

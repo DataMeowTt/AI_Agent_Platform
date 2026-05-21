@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   CartesianGrid,
@@ -24,12 +24,43 @@ import { useIndicators } from '@/lib/hooks/useIndicators';
 import { useCompare } from '@/lib/hooks/useCompare';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { formatIndicatorValue, formatYear } from '@/lib/utils/format';
+import { DEFAULT_COMPARE_COUNTRIES } from '@/lib/utils/compare';
 
-const DEFAULT_COUNTRIES = ['USA', 'AUS'];
 const DEFAULT_INDICATOR = 'govdebt_GDP';
 const DEFAULT_FROM = 2010;
 const DEFAULT_TO = 2023;
 const CHART_COLORS = ['#1d4ed8', '#b45309', '#0f766e', '#7c3aed', '#be123c'];
+
+const buildLinearTrendByYear = (
+  points: Array<{ year: number; value: number | null; trend_value?: number | null }>,
+): Map<number, number | null> => {
+  const explicitTrend = points.some((point) => point.trend_value != null);
+  if (explicitTrend) {
+    return new Map(points.map((point) => [point.year, point.trend_value ?? null]));
+  }
+
+  const valid = points.filter(
+    (point): point is { year: number; value: number; trend_value?: number | null } =>
+      point.value != null && Number.isFinite(point.value),
+  );
+  if (valid.length < 2) {
+    return new Map(points.map((point) => [point.year, null]));
+  }
+
+  const n = valid.length;
+  const sumX = valid.reduce((acc, point) => acc + point.year, 0);
+  const sumY = valid.reduce((acc, point) => acc + point.value, 0);
+  const sumXY = valid.reduce((acc, point) => acc + point.year * point.value, 0);
+  const sumXX = valid.reduce((acc, point) => acc + point.year * point.year, 0);
+  const denom = n * sumXX - sumX * sumX;
+  if (denom === 0) {
+    return new Map(points.map((point) => [point.year, null]));
+  }
+
+  const slope = (n * sumXY - sumX * sumY) / denom;
+  const intercept = (sumY - slope * sumX) / n;
+  return new Map(points.map((point) => [point.year, intercept + slope * point.year]));
+};
 
 export default function ComparePage() {
   return (
@@ -42,7 +73,7 @@ export default function ComparePage() {
 function ComparePageContent() {
   const [countriesState, setCountriesState] = useUrlState<string[]>(
     'countries',
-    DEFAULT_COUNTRIES,
+    [...DEFAULT_COMPARE_COUNTRIES],
   );
   const [indicatorState, setIndicatorState] = useUrlState<string>(
     'indicator',
@@ -108,6 +139,10 @@ function ComparePageContent() {
 
   const chartRows = useMemo(() => {
     const grouped = compareQuery.data || {};
+    const trendByCountry = new Map<string, Map<number, number | null>>();
+    Object.entries(grouped).forEach(([countryCode, points]) => {
+      trendByCountry.set(countryCode, buildLinearTrendByYear(points));
+    });
     const years = new Set<number>();
     Object.values(grouped).forEach(items => {
       items.forEach(item => years.add(item.year));
@@ -119,6 +154,7 @@ function ComparePageContent() {
         countriesState.forEach(countryCode => {
           const found = grouped[countryCode]?.find(item => item.year === year);
           row[countryCode] = found?.value ?? null;
+          row[`${countryCode}__trend`] = trendByCountry.get(countryCode)?.get(year) ?? null;
         });
         return row;
       });
@@ -362,15 +398,28 @@ function ComparePageContent() {
                   />
                   <Legend />
                   {countriesState.map((countryCode, index) => (
-                    <Line
-                      key={countryCode}
-                      type="monotone"
-                      dataKey={countryCode}
-                      stroke={CHART_COLORS[index % CHART_COLORS.length]}
-                      strokeWidth={2}
-                      dot={false}
-                      connectNulls
-                    />
+                    <Fragment key={`${countryCode}-series`}>
+                      <Line
+                        type="monotone"
+                        dataKey={countryCode}
+                        stroke={CHART_COLORS[index % CHART_COLORS.length]}
+                        strokeWidth={2}
+                        dot={false}
+                        connectNulls
+                      />
+                      {chartRows.some(row => row[`${countryCode}__trend`] != null) ? (
+                        <Line
+                          type="monotone"
+                          dataKey={`${countryCode}__trend`}
+                          name={`${countryCode} (xu hướng)`}
+                          stroke={CHART_COLORS[index % CHART_COLORS.length]}
+                          strokeWidth={2}
+                          strokeDasharray="6 4"
+                          dot={false}
+                          connectNulls
+                        />
+                      ) : null}
+                    </Fragment>
                   ))}
                 </LineChart>
               </ResponsiveContainer>

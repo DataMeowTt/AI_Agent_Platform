@@ -9,6 +9,7 @@ import StateBlock from '@/components/ui/StateBlock';
 import { TableSkeleton } from '@/components/ui/Skeletons';
 import { useIndicators } from '@/lib/hooks/useIndicators';
 import { getIndicatorCategoryLabel } from '@/lib/indicatorCategories';
+import { DEFAULT_COMPARE_COUNTRIES } from '@/lib/utils/compare';
 
 export default function IndicatorsPage() {
   const { data, isLoading, isError, error } = useIndicators();
@@ -105,7 +106,14 @@ export default function IndicatorsPage() {
               {filtered.map((item) => (
                 <tr key={item.code} className="hover:bg-slate-50">
                   <td className="px-2 py-3">
-                    <p className="font-medium text-slate-900">{item.name}</p>
+                    <p className="font-medium text-slate-900">
+                      {item.name}{' '}
+                      {item.supports_trend ? (
+                        <span className="ml-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+                          Có xu hướng
+                        </span>
+                      ) : null}
+                    </p>
                     <p className="text-xs text-slate-500">{item.code}</p>
                     {item.description_vi ? <p className="mt-1 text-xs text-slate-600">{item.description_vi}</p> : null}
                   </td>
@@ -124,7 +132,7 @@ export default function IndicatorsPage() {
                   <td className="px-2 py-3">
                     <div className="flex justify-end gap-2">
                       <Link
-                        href={`/compare?countries=VNM,THA&indicator=${item.code}&from=2010&to=2023`}
+                        href={`/compare?countries=${DEFAULT_COMPARE_COUNTRIES.join(',')}&indicator=${item.code}&from=2010&to=2023`}
                         className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
                       >
                         So sánh
