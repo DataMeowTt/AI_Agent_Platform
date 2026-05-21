@@ -113,6 +113,15 @@ export default function IndicatorsPage() {
                           Có xu hướng
                         </span>
                       ) : null}
+                      {item.supports_anomaly ? (
+                        <span
+                          className="ml-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700"
+                          title="Có dữ liệu điểm bất thường thống kê cho chỉ số này"
+                          aria-label="Có dữ liệu điểm bất thường thống kê cho chỉ số này"
+                        >
+                          Hỗ trợ anomaly
+                        </span>
+                      ) : null}
                     </p>
                     <p className="text-xs text-slate-500">{item.code}</p>
                     {item.description_vi ? <p className="mt-1 text-xs text-slate-600">{item.description_vi}</p> : null}
