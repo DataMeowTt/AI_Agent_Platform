@@ -28,12 +28,6 @@ const DEFAULT_ANALYTICS_DATASET = 'gov_ai_analytics';
 const DEFAULT_MAX_BYTES_BILLED = 100000000;
 const DEFAULT_CACHE_TTL_SECONDS = 300;
 const MAX_LIMIT = 100;
-const SUPPORTED_CANONICAL_ANOMALY_CODES = new Set([
-  'rGDP_growth_YoY',
-  'govdebt_GDP',
-  'REER_deviation',
-]);
-
 type BigQueryTables = {
   goldGrowthDynamics: string;
   goldFiscalMonetary: string;
@@ -80,7 +74,6 @@ export class BigQueryService {
     this.indicators
       .filter(
         indicator =>
-          SUPPORTED_CANONICAL_ANOMALY_CODES.has(indicator.code) &&
           indicator.supports_anomaly &&
           indicator.analytics_table &&
           indicator.gold_column,
@@ -727,8 +720,9 @@ export class BigQueryService {
     const offset = this.clampNumber(params.offset, 0, Number.MAX_SAFE_INTEGER, 0);
 
     if (hasIndicatorFilter && !normalizedIndicator) {
+      const supportedCodes = Array.from(this.anomalyIndicatorsByCode.keys()).sort();
       throw new BadRequestException(
-        'Chỉ số anomaly không hỗ trợ. Hãy dùng mã canonical như rGDP_growth_YoY, govdebt_GDP, REER_deviation.',
+        `Chỉ số anomaly không hỗ trợ. Các mã hợp lệ: ${supportedCodes.join(', ')}`,
       );
     }
 

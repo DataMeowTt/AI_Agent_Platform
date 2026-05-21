@@ -14,11 +14,6 @@ import { useIndicators } from '@/lib/hooks/useIndicators';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 
 const PAGE_SIZE = 12;
-const CANONICAL_ANOMALY_CODES = new Set([
-  'rGDP_growth_YoY',
-  'govdebt_GDP',
-  'REER_deviation',
-]);
 
 export default function AnomaliesPage() {
   return (
@@ -52,10 +47,7 @@ function AnomaliesPageContent() {
   const safePage = Math.min(Math.max(page, 1), totalPages);
 
   const anomalyIndicators = useMemo(() => {
-    const indicators = (indicatorsQuery.data || []).filter(
-      item =>
-        item.supports_anomaly !== false && CANONICAL_ANOMALY_CODES.has(item.code),
-    );
+    const indicators = (indicatorsQuery.data || []).filter(item => item.supports_anomaly === true);
     return indicators.length > 0
       ? indicators
       : [
