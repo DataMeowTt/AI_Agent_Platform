@@ -52,6 +52,8 @@ PIPELINE_RUN_METADATA_REQUIRED = (
     "status",
     "source_changed",
     "change_reason",
+    "candidate_source_manifest_path",
+    "baseline_success_manifest_path",
     "warehouse_publish_performed",
     "publish_performed",
     "last_successful_updated",
@@ -65,6 +67,7 @@ NON_PUBLISHING_READINESS_STATUSES = {
     "PLANNED_UNCHANGED",
     "DRY_RUN_CHANGED",
     "SKIPPED_UNCHANGED",
+    "BLOCKED_APPROVAL_REQUIRED",
 }
 
 FAILURE_STATUSES = {
@@ -135,6 +138,10 @@ def _is_valid_sources_json(value: object) -> bool:
     return isinstance(parsed, (dict, list))
 
 
+def _is_gcs_uri(value: object) -> bool:
+    return isinstance(value, str) and value.startswith("gs://") and len(value.strip()) > 5
+
+
 def _metadata_semantic_errors(row: dict) -> list[str]:
     status = str(row.get("status") or "").strip().upper()
     errors: list[str] = []
@@ -156,6 +163,11 @@ def _metadata_semantic_errors(row: dict) -> list[str]:
             errors.append("SUCCESS requires latest_data_year to be a valid integer")
         if not _is_valid_sources_json(row.get("sources_json")):
             errors.append("SUCCESS requires sources_json to be valid JSON metadata")
+        candidate_manifest_path = row.get("candidate_source_manifest_path")
+        if _is_blank(candidate_manifest_path):
+            errors.append("SUCCESS requires candidate_source_manifest_path to be non-empty")
+        elif not _is_gcs_uri(candidate_manifest_path):
+            errors.append("SUCCESS requires candidate_source_manifest_path to be a durable gs:// URI")
         return errors
 
     if status in NON_PUBLISHING_READINESS_STATUSES or status in FAILURE_STATUSES or status.endswith("FAILED"):

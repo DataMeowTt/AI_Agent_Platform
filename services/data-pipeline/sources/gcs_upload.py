@@ -4,9 +4,8 @@ import json
 import mimetypes
 import os
 import re
-import subprocess
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Callable
 
 from ops.gcs_layout import (
     bronze_prefix,
@@ -17,6 +16,7 @@ from ops.gcs_layout import (
     validate_source_name,
 )
 from ops.manifest import sha256_file
+from sources.gcs_runtime_client import upload_file_to_gcs_uri
 
 
 _BUCKET_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$|^[a-z0-9]$")
@@ -349,34 +349,11 @@ def write_json(path: str | Path, payload: dict[str, Any]) -> Path:
     return output
 
 
-def preflight_gcloud(bucket: str) -> dict[str, str]:
-    clean_bucket = normalize_bucket(bucket)
-    project = subprocess.run(
-        ["gcloud", "config", "get-value", "project"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-    active_account = subprocess.run(
-        ["gcloud", "auth", "list", "--filter=status:ACTIVE", "--format=value(account)"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-    bucket_desc = subprocess.run(
-        ["gcloud", "storage", "buckets", "describe", f"gs://{clean_bucket}"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-    return {
-        "project": project,
-        "active_account": active_account,
-        "bucket_description": bucket_desc,
-    }
-
-
-def execute_upload_plan(upload_plan: dict[str, Any]) -> dict[str, Any]:
+def execute_upload_plan(
+    upload_plan: dict[str, Any],
+    *,
+    uploader: Callable[..., dict[str, Any]] = upload_file_to_gcs_uri,
+) -> dict[str, Any]:
     if not upload_plan.get("cloud_write_approved"):
         return {
             "status": "blocked",
@@ -387,41 +364,42 @@ def execute_upload_plan(upload_plan: dict[str, Any]) -> dict[str, Any]:
             "uploaded_count": 0,
         }
 
-    preflight = preflight_gcloud(str(upload_plan["gcs_bucket"]))
     uploaded: list[dict[str, Any]] = []
     for entry in upload_plan.get("objects", []):
         if entry.get("status") == "missing":
             uploaded.append({**entry, "status": "skipped"})
             continue
-        subprocess.run(
-            ["gcloud", "storage", "cp", entry["local_path"], entry["target_gcs_uri"]],
-            check=True,
-        )
-        uploaded.append({**entry, "status": "uploaded"})
-
-    verify_results: list[dict[str, Any]] = []
-    for prefix in upload_plan.get("target_prefixes", []):
-        result = subprocess.run(
-            ["gcloud", "storage", "ls", "-l", f"{prefix}**"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        verify_results.append(
-            {
-                "prefix": prefix,
-                "output": result.stdout.strip(),
+        try:
+            uploader(
+                local_path=entry["local_path"],
+                target_gcs_uri=entry["target_gcs_uri"],
+                content_type=entry.get("content_type"),
+            )
+            uploaded.append({**entry, "status": "uploaded"})
+        except Exception as exc:
+            uploaded_count = sum(1 for item in uploaded if item["status"] == "uploaded")
+            failed_status = "PARTIAL_FAILED" if uploaded_count > 0 else "FAILED"
+            return {
+                "status": failed_status,
+                "run_id": upload_plan.get("run_id"),
+                "run_date": upload_plan.get("run_date"),
+                "gcs_bucket": upload_plan.get("gcs_bucket"),
+                "uploaded_count": uploaded_count,
+                "skipped_count": sum(1 for item in uploaded if item["status"] == "skipped"),
+                "cloud_write_performed": uploaded_count > 0,
+                "uploaded_objects": [item for item in uploaded if item["status"] == "uploaded"],
+                "failed_object": {**entry, "status": "failed"},
+                "error_message": str(exc),
+                "objects": [*uploaded, {**entry, "status": "failed", "error_message": str(exc)}],
             }
-        )
 
     return {
         "status": "uploaded",
         "run_id": upload_plan.get("run_id"),
         "run_date": upload_plan.get("run_date"),
         "gcs_bucket": upload_plan.get("gcs_bucket"),
-        "preflight": preflight,
         "uploaded_count": sum(1 for item in uploaded if item["status"] == "uploaded"),
         "skipped_count": sum(1 for item in uploaded if item["status"] == "skipped"),
-        "verify_results": verify_results,
+        "cloud_write_performed": sum(1 for item in uploaded if item["status"] == "uploaded") > 0,
         "objects": uploaded,
     }

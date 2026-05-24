@@ -115,6 +115,86 @@ def test_cloud_write_approved_false_blocks_execution(tmp_path: Path, monkeypatch
     assert result["reason"] == "cloud_write_approved_false"
 
 
+def test_execute_upload_plan_first_object_failure_reports_zero_uploaded(tmp_path: Path) -> None:
+    local_file = tmp_path / "file-1.txt"
+    _write_text(local_file, "payload-1\n")
+
+    def failing_uploader(*, local_path: str, target_gcs_uri: str, content_type: str | None = None) -> dict:
+        del local_path, target_gcs_uri, content_type
+        raise RuntimeError("upload failed object-1")
+
+    payload = execute_upload_plan(
+        {
+            "cloud_write_approved": True,
+            "run_id": "run-1",
+            "run_date": "2026-05-24",
+            "gcs_bucket": "bucket",
+            "objects": [
+                {
+                    "status": "planned",
+                    "local_path": str(local_file),
+                    "target_gcs_uri": "gs://bucket/path/file-1.txt",
+                    "content_type": "text/plain",
+                }
+            ],
+        },
+        uploader=failing_uploader,
+    )
+
+    assert payload["status"] == "FAILED"
+    assert payload["uploaded_count"] == 0
+    assert payload["cloud_write_performed"] is False
+    assert payload["failed_object"]["target_gcs_uri"] == "gs://bucket/path/file-1.txt"
+    assert "upload failed object-1" in payload["error_message"]
+
+
+def test_execute_upload_plan_second_object_failure_reports_partial_uploaded(tmp_path: Path) -> None:
+    local_file_1 = tmp_path / "file-1.txt"
+    local_file_2 = tmp_path / "file-2.txt"
+    _write_text(local_file_1, "payload-1\n")
+    _write_text(local_file_2, "payload-2\n")
+    call_count = {"n": 0}
+
+    def partial_failing_uploader(*, local_path: str, target_gcs_uri: str, content_type: str | None = None) -> dict:
+        del local_path, content_type
+        call_count["n"] += 1
+        if call_count["n"] == 2:
+            raise RuntimeError("upload failed object-2")
+        return {"target_gcs_uri": target_gcs_uri}
+
+    payload = execute_upload_plan(
+        {
+            "cloud_write_approved": True,
+            "run_id": "run-1",
+            "run_date": "2026-05-24",
+            "gcs_bucket": "bucket",
+            "objects": [
+                {
+                    "status": "planned",
+                    "local_path": str(local_file_1),
+                    "target_gcs_uri": "gs://bucket/path/file-1.txt",
+                    "content_type": "text/plain",
+                },
+                {
+                    "status": "planned",
+                    "local_path": str(local_file_2),
+                    "target_gcs_uri": "gs://bucket/path/file-2.txt",
+                    "content_type": "text/plain",
+                },
+            ],
+        },
+        uploader=partial_failing_uploader,
+    )
+
+    assert payload["status"] == "PARTIAL_FAILED"
+    assert payload["uploaded_count"] == 1
+    assert payload["cloud_write_performed"] is True
+    assert len(payload["uploaded_objects"]) == 1
+    assert payload["uploaded_objects"][0]["target_gcs_uri"] == "gs://bucket/path/file-1.txt"
+    assert payload["failed_object"]["target_gcs_uri"] == "gs://bucket/path/file-2.txt"
+    assert "upload failed object-2" in payload["error_message"]
+
+
 def test_ingest_sources_dry_run_generates_upload_plan_json(tmp_path: Path) -> None:
     output_dir = tmp_path / "local_bronze"
     result = _run_ingest(

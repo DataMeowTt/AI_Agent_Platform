@@ -16,8 +16,8 @@ def _metadata() -> PipelineRunMetadata:
         enabled_sources=["wdi"],
         source_changed=True,
         change_reason="official source changed",
-        candidate_source_manifest_path="/tmp/candidate.json",
-        baseline_success_manifest_path="/tmp/baseline.json",
+        candidate_source_manifest_path="gs://bucket/manifests/source_manifest/run_date=2026-05-24/source_manifest.json",
+        baseline_success_manifest_path="gs://bucket/manifests/source_manifest/run_date=2026-05-01/source_manifest.json",
         changed_sources=["wdi"],
         validation_status="passed",
         data_quality_status="passed",
@@ -103,6 +103,67 @@ def test_success_status_rejects_warehouse_publish_performed_false() -> None:
     )
 
 
+def test_success_status_accepts_first_run_with_baseline_none() -> None:
+    record = build_pipeline_run_metadata_record(_metadata())
+    record["baseline_success_manifest_path"] = None
+    plan = build_ops_writer_plan({"pipeline_run_metadata": [record]}, project_id="western-pivot-452008-a6")
+    entry = _metadata_entry(plan)
+
+    assert entry["validation"]["status"] == "passed"
+
+
+def test_success_rejects_missing_candidate_source_manifest_path() -> None:
+    record = build_pipeline_run_metadata_record(_metadata())
+    record.pop("candidate_source_manifest_path")
+    plan = build_ops_writer_plan({"pipeline_run_metadata": [record]}, project_id="western-pivot-452008-a6")
+    entry = _metadata_entry(plan)
+
+    assert entry["validation"]["status"] == "failed"
+    assert any(
+        "candidate_source_manifest_path" in row_error["missing_fields"]
+        for row_error in entry["validation"]["row_errors"]
+    )
+
+
+def test_success_rejects_blank_candidate_source_manifest_path() -> None:
+    record = build_pipeline_run_metadata_record(_metadata())
+    record["candidate_source_manifest_path"] = "   "
+    plan = build_ops_writer_plan({"pipeline_run_metadata": [record]}, project_id="western-pivot-452008-a6")
+    entry = _metadata_entry(plan)
+
+    assert entry["validation"]["status"] == "failed"
+    assert any(
+        "SUCCESS requires candidate_source_manifest_path to be non-empty" in row_error["semantic_errors"]
+        for row_error in entry["validation"]["row_errors"]
+    )
+
+
+def test_success_rejects_local_candidate_source_manifest_path() -> None:
+    record = build_pipeline_run_metadata_record(_metadata())
+    record["candidate_source_manifest_path"] = "/tmp/source_manifest.json"
+    plan = build_ops_writer_plan({"pipeline_run_metadata": [record]}, project_id="western-pivot-452008-a6")
+    entry = _metadata_entry(plan)
+
+    assert entry["validation"]["status"] == "failed"
+    assert any(
+        "SUCCESS requires candidate_source_manifest_path to be a durable gs:// URI" in row_error["semantic_errors"]
+        for row_error in entry["validation"]["row_errors"]
+    )
+
+
+def test_success_rejects_non_gcs_candidate_source_manifest_path() -> None:
+    record = build_pipeline_run_metadata_record(_metadata())
+    record["candidate_source_manifest_path"] = "https://example.com/source_manifest.json"
+    plan = build_ops_writer_plan({"pipeline_run_metadata": [record]}, project_id="western-pivot-452008-a6")
+    entry = _metadata_entry(plan)
+
+    assert entry["validation"]["status"] == "failed"
+    assert any(
+        "SUCCESS requires candidate_source_manifest_path to be a durable gs:// URI" in row_error["semantic_errors"]
+        for row_error in entry["validation"]["row_errors"]
+    )
+
+
 def test_planned_changed_rejects_success_publish_flags_or_published_at() -> None:
     record = build_pipeline_run_metadata_record(_metadata())
     record["status"] = "PLANNED_CHANGED"
@@ -124,5 +185,64 @@ def test_planned_changed_rejects_success_publish_flags_or_published_at() -> None
     )
     assert any(
         "PLANNED_CHANGED requires published_at to be empty" in row_error["semantic_errors"]
+        for row_error in entry["validation"]["row_errors"]
+    )
+
+
+def test_blocked_approval_required_allows_non_publish_shape() -> None:
+    record = build_pipeline_run_metadata_record(_metadata())
+    record["status"] = "BLOCKED_APPROVAL_REQUIRED"
+    record["warehouse_publish_performed"] = False
+    record["publish_performed"] = False
+    record["last_successful_updated"] = False
+    record["published_at"] = None
+    plan = build_ops_writer_plan({"pipeline_run_metadata": [record]}, project_id="western-pivot-452008-a6")
+    entry = _metadata_entry(plan)
+
+    assert entry["validation"]["status"] == "passed"
+
+
+def test_blocked_approval_required_rejects_success_like_flags() -> None:
+    record = build_pipeline_run_metadata_record(_metadata())
+    record["status"] = "BLOCKED_APPROVAL_REQUIRED"
+    record["warehouse_publish_performed"] = True
+    record["publish_performed"] = True
+    record["last_successful_updated"] = True
+    record["published_at"] = "2026-05-24T02:10:00Z"
+    plan = build_ops_writer_plan({"pipeline_run_metadata": [record]}, project_id="western-pivot-452008-a6")
+    entry = _metadata_entry(plan)
+
+    assert entry["validation"]["status"] == "failed"
+    assert any(
+        "BLOCKED_APPROVAL_REQUIRED requires warehouse_publish_performed=False" in row_error["semantic_errors"]
+        for row_error in entry["validation"]["row_errors"]
+    )
+    assert any(
+        "BLOCKED_APPROVAL_REQUIRED requires publish_performed=False" in row_error["semantic_errors"]
+        for row_error in entry["validation"]["row_errors"]
+    )
+    assert any(
+        "BLOCKED_APPROVAL_REQUIRED requires last_successful_updated=False" in row_error["semantic_errors"]
+        for row_error in entry["validation"]["row_errors"]
+    )
+    assert any(
+        "BLOCKED_APPROVAL_REQUIRED requires published_at to be empty" in row_error["semantic_errors"]
+        for row_error in entry["validation"]["row_errors"]
+    )
+
+
+def test_partial_failed_rejects_success_like_flags() -> None:
+    record = build_pipeline_run_metadata_record(_metadata())
+    record["status"] = "PARTIAL_FAILED"
+    record["warehouse_publish_performed"] = True
+    record["publish_performed"] = True
+    record["last_successful_updated"] = True
+    record["published_at"] = "2026-05-24T02:10:00Z"
+    plan = build_ops_writer_plan({"pipeline_run_metadata": [record]}, project_id="western-pivot-452008-a6")
+    entry = _metadata_entry(plan)
+
+    assert entry["validation"]["status"] == "failed"
+    assert any(
+        "PARTIAL_FAILED requires warehouse_publish_performed=False" in row_error["semantic_errors"]
         for row_error in entry["validation"]["row_errors"]
     )
