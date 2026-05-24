@@ -43,6 +43,17 @@ REQUIRED_FIELDS = {
     "job_logs": JOB_LOGS_REQUIRED,
 }
 
+PIPELINE_RUN_METADATA_REQUIRED = (
+    "run_id",
+    "run_date",
+    "execution_mode",
+    "status",
+    "source_changed",
+    "change_reason",
+    "warehouse_publish_performed",
+    "last_successful_updated",
+)
+
 
 def build_table_id(project_id: str | None, dataset: str, table: str) -> str | None:
     clean_project = str(project_id or "").strip()
@@ -82,5 +93,23 @@ def build_ops_writer_plan(ops_records: dict, *, project_id: str | None = None) -
                 "validation": validate_rows(table, rows),
             }
         )
+    metadata_rows = list(ops_records.get("pipeline_run_metadata", []))
+    if metadata_rows:
+        plan.append(
+            {
+                "dataset": OPS_DATASET,
+                "table": "pipeline_run_metadata",
+                "table_id": build_table_id(project_id, OPS_DATASET, "pipeline_run_metadata"),
+                "row_count": len(metadata_rows),
+                "rows_preview": metadata_rows[:1],
+                "dry_run": True,
+                "write_disposition": WRITE_DISPOSITION,
+                "validation": {
+                    "status": "passed"
+                    if all(all(field in row for field in PIPELINE_RUN_METADATA_REQUIRED) for row in metadata_rows)
+                    else "failed",
+                    "required_fields": list(PIPELINE_RUN_METADATA_REQUIRED),
+                },
+            }
+        )
     return plan
-

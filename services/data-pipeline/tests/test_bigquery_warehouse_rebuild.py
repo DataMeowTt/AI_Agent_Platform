@@ -3,14 +3,17 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from warehouse.bigquery_warehouse_rebuild import (
     build_analytics_tables,
     build_gold_tables,
     build_publish_plan,
     derive_runtime_metadata,
+    run_silver_preflight,
 )
 from warehouse.bigquery_warehouse_validation import load_table_contract
+from jobs.rebuild_bigquery_warehouse import parse_args as parse_rebuild_args
 
 
 def _make_silver_fixture() -> pd.DataFrame:
@@ -146,3 +149,63 @@ def test_build_gold_and_analytics_tables(tmp_path: Path) -> None:
     assert publish_plan["write_strategy"] == "staging_validate_write_truncate"
     assert len(publish_plan["tables"]) == 11
 
+
+class _StubExecutor:
+    def __init__(self, row_count: int) -> None:
+        self._row_count = row_count
+
+    def table_exists(self, _table_id: str) -> bool:
+        return True
+
+    def query_dataframe(self, query: str, *, max_bytes_billed: int | None = None) -> pd.DataFrame:
+        del max_bytes_billed
+        if "INFORMATION_SCHEMA.COLUMNS" in query:
+            rows = []
+            for col in (
+                "country_code",
+                "country",
+                "year",
+                "indicator",
+                "value",
+                "source",
+                "run_id",
+                "run_date",
+                "loaded_at",
+            ):
+                rows.append({"column_name": col, "is_nullable": "NO", "data_type": "STRING"})
+            return pd.DataFrame(rows)
+        if "SUM(CASE WHEN" in query:
+            return pd.DataFrame([{"country_code": 0, "country": 0, "year": 0, "indicator": 0, "source": 0, "run_id": 0, "run_date": 0, "loaded_at": 0}])
+        if "GROUP BY source" in query:
+            return pd.DataFrame([{"source": "wdi", "row_count": self._row_count}])
+        if "MIN(year)" in query:
+            return pd.DataFrame([{"year_min": 2000, "year_max": 2025, "country_count": 1, "indicator_count": 1}])
+        raise AssertionError(f"Unexpected query: {query}")
+
+    def query_scalar_int(self, query: str, *, max_bytes_billed: int | None = None) -> int:
+        del query, max_bytes_billed
+        return self._row_count
+
+
+def test_dynamic_validation_accepts_non_historical_row_count() -> None:
+    preflight = run_silver_preflight(
+        executor=_StubExecutor(123456),
+        silver_table_id="western-pivot-452008-a6.gov_ai_silver.silver_indicators",
+        expected_row_count=None,
+    )
+    assert preflight["row_count"] == 123456
+    assert preflight["dynamic_row_count_validation"] is True
+
+
+def test_explicit_expected_row_count_still_fails_on_mismatch() -> None:
+    with pytest.raises(ValueError, match="Silver row_count mismatch"):
+        run_silver_preflight(
+            executor=_StubExecutor(10),
+            silver_table_id="western-pivot-452008-a6.gov_ai_silver.silver_indicators",
+            expected_row_count=11,
+        )
+
+
+def test_rebuild_cli_defaults_to_dynamic_validation() -> None:
+    args = parse_rebuild_args([])
+    assert args.expected_silver_row_count is None

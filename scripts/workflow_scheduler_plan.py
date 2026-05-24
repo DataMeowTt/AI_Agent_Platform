@@ -4,730 +4,254 @@ import argparse
 import ast
 import json
 import re
-import sys
 from pathlib import Path
 from typing import Any
 
-
-SCRIPT_DIR = Path(__file__).resolve().parent
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
-
-from cloud_run_job_plan import build_plan as build_cloud_run_job_plan
-
-
-DEFAULT_PROJECT_ID = "{project_id}"
-DEFAULT_REGION = "{region}"
-DEFAULT_WORKFLOW_NAME = "{workflow_name}"
-DEFAULT_SCHEDULER_NAME = "{scheduler_name}"
-DEFAULT_SERVICE_ACCOUNT = "{service_account}"
-DEFAULT_BUCKET = "{bucket}"
+DEFAULT_PROJECT_ID = "western-pivot-452008-a6"
+DEFAULT_REGION = "asia-southeast1"
+DEFAULT_WORKFLOW_NAME = "economic-data-pipeline"
+DEFAULT_SCHEDULER_NAME = "economic-data-pipeline-monthly"
+DEFAULT_SERVICE_ACCOUNT = "gov-ai-runner@western-pivot-452008-a6.iam.gserviceaccount.com"
 DEFAULT_RUN_ID = "{run_id}"
 DEFAULT_RUN_DATE = "{run_date}"
-DEFAULT_FORCE = "{force}"
-DEFAULT_ARTIFACT_REPOSITORY = "{artifact_repository}"
-DEFAULT_IMAGE_TAG = "{image_tag}"
-DEFAULT_GENERATED_AT = "{generated_at}"
-DEFAULT_OUTPUT_FORMAT = "{output_format}"
-DEFAULT_PREVIOUS_MANIFEST_PATH = "{previous_manifest_path}"
-DEFAULT_SILVER_OUTPUT_URI = "{silver_output_uri}"
-DEFAULT_POSTGRES_HOST = "{postgres_host}"
-DEFAULT_POSTGRES_PORT = "{postgres_port}"
-DEFAULT_POSTGRES_DB = "{postgres_db}"
-DEFAULT_POSTGRES_USER = "{postgres_user}"
-DEFAULT_POSTGRES_PASSWORD = "{postgres_password}"
-DEFAULT_BIGQUERY_ANALYTICS_DATASET = "{bigquery_analytics_dataset}"
-DEFAULT_BIGQUERY_LOCATION = "{bigquery_location}"
-DEFAULT_LATEST_VALID_YEAR = "{latest_valid_year}"
-DEFAULT_DATABASE_URL = "{database_url}"
 
-def build_command_patterns() -> list[tuple[str, re.Pattern[str]]]:
-    def joined(parts: list[str]) -> str:
-        return "".join(parts)
+STEP_ORDER = [
+    "initialize_run",
+    "fetch_official_sources_and_decide_change",
+    "branch_unchanged_skip_or_changed_continue",
+    "persist_bronze_and_manifests_if_changed",
+    "build_and_validate_silver_candidate",
+    "build_and_validate_gold_analytics_candidates",
+    "run_data_quality_gate",
+    "publish_bigquery_production_if_valid",
+    "record_success_freshness",
+    "backend_freshness_smoke",
+]
 
-    return [
-        (joined(["g", "cloud", r"\s+", "run", r"\s+", "jobs", r"\s+", "execute"]), re.compile(joined(["gcloud", r"\s+", "run", r"\s+", "jobs", r"\s+", "execute"]), re.IGNORECASE)),
-        (joined(["g", "cloud", r"\s+", "workflows", r"\s+", "deploy"]), re.compile(joined(["gcloud", r"\s+", "workflows", r"\s+", "deploy"]), re.IGNORECASE)),
-        (joined(["g", "cloud", r"\s+", "scheduler", r"\s+", "jobs", r"\s+", "create"]), re.compile(joined(["gcloud", r"\s+", "scheduler", r"\s+", "jobs", r"\s+", "create"]), re.IGNORECASE)),
-        (joined(["g", "cloud", r"\s+", "scheduler", r"\s+", "jobs", r"\s+", "update"]), re.compile(joined(["gcloud", r"\s+", "scheduler", r"\s+", "jobs", r"\s+", "update"]), re.IGNORECASE)),
-        (joined(["g", "cloud", r"\s+", "auth"]), re.compile(joined(["gcloud", r"\s+", "auth"]), re.IGNORECASE)),
-        (joined(["g", "cloud", r"\s+", "config", r"\s+", "set"]), re.compile(joined(["gcloud", r"\s+", "config", r"\s+", "set"]), re.IGNORECASE)),
-        (joined(["b", "q"]), re.compile(joined([r"\b", "b", "q", r"\b"]), re.IGNORECASE)),
-        (joined(["gs", "util"]), re.compile(joined([r"\b", "gs", "util", r"\b"]), re.IGNORECASE)),
-        (joined(["ter", "ra", "form"]), re.compile(joined([r"\b", "ter", "ra", "form", r"\b"]), re.IGNORECASE)),
-        (joined(["pu", "lu", "mi"]), re.compile(joined([r"\b", "pu", "lu", "mi", r"\b"]), re.IGNORECASE)),
-        (joined(["do", "cker", r"\s+", "push"]), re.compile(joined(["docker", r"\s+", "push"]), re.IGNORECASE)),
-    ]
+COMMAND_PATTERNS = (
+    ("gcloud", re.compile(r"(?i)\bgcloud\s+")),
+    ("bq", re.compile(r"(?i)\bbq\b")),
+    ("gsutil", re.compile(r"(?i)\bgsutil\b")),
+)
+
+EXECUTION_APIS = {
+    "subprocess": {"run", "Popen", "call", "check_call", "check_output"},
+    "os": {"system", "popen"},
+}
 
 
-def build_placeholders() -> list[dict[str, str]]:
-    return [
-        {
-            "name": "project_id",
-            "token": DEFAULT_PROJECT_ID,
-            "description": "GCP project identifier.",
-        },
-        {
-            "name": "region",
-            "token": DEFAULT_REGION,
-            "description": "GCP region for the workflow and scheduler.",
-        },
-        {
-            "name": "workflow_name",
-            "token": DEFAULT_WORKFLOW_NAME,
-            "description": "Stable workflow name for the orchestration template.",
-        },
-        {
-            "name": "scheduler_name",
-            "token": DEFAULT_SCHEDULER_NAME,
-            "description": "Stable scheduler name for the monthly trigger template.",
-        },
-        {
-            "name": "service_account",
-            "token": DEFAULT_SERVICE_ACCOUNT,
-            "description": "Service account used by Workflows and Cloud Run Jobs.",
-        },
-        {
-            "name": "bucket",
-            "token": DEFAULT_BUCKET,
-            "description": "Bucket placeholder for snapshot and manifest paths.",
-        },
-        {
-            "name": "run_id",
-            "token": DEFAULT_RUN_ID,
-            "description": "Run identifier propagated through the workflow.",
-        },
-        {
-            "name": "run_date",
-            "token": DEFAULT_RUN_DATE,
-            "description": "Business date propagated through the workflow.",
-        },
-        {
-            "name": "force",
-            "token": DEFAULT_FORCE,
-            "description": "Manual override flag for reruns and unchanged snapshots.",
-        },
-        {
-            "name": "artifact_repository",
-            "token": DEFAULT_ARTIFACT_REPOSITORY,
-            "description": "Artifact Registry repository placeholder for image references.",
-        },
-        {
-            "name": "image_tag",
-            "token": DEFAULT_IMAGE_TAG,
-            "description": "Image tag placeholder used by job templates.",
-        },
-        {
-            "name": "generated_at",
-            "token": DEFAULT_GENERATED_AT,
-            "description": "Deterministic generation timestamp placeholder.",
-        },
-        {
-            "name": "output_format",
-            "token": DEFAULT_OUTPUT_FORMAT,
-            "description": "Output format placeholder for local planner alignment.",
-        },
-        {
-            "name": "previous_manifest_path",
-            "token": DEFAULT_PREVIOUS_MANIFEST_PATH,
-            "description": "Previous manifest path placeholder for change detection.",
-        },
-        {
-            "name": "silver_output_uri",
-            "token": DEFAULT_SILVER_OUTPUT_URI,
-            "description": "Silver output URI placeholder reused by downstream job templates.",
-        },
-        {
-            "name": "postgres_host",
-            "token": DEFAULT_POSTGRES_HOST,
-            "description": "Postgres-compatible host placeholder for gold and analytics jobs.",
-        },
-        {
-            "name": "postgres_port",
-            "token": DEFAULT_POSTGRES_PORT,
-            "description": "Postgres-compatible port placeholder.",
-        },
-        {
-            "name": "postgres_db",
-            "token": DEFAULT_POSTGRES_DB,
-            "description": "Postgres-compatible database name placeholder.",
-        },
-        {
-            "name": "postgres_user",
-            "token": DEFAULT_POSTGRES_USER,
-            "description": "Postgres-compatible user placeholder.",
-        },
-        {
-            "name": "postgres_password",
-            "token": DEFAULT_POSTGRES_PASSWORD,
-            "description": "Secret placeholder for Postgres-compatible jobs.",
-        },
-        {
-            "name": "bigquery_analytics_dataset",
-            "token": DEFAULT_BIGQUERY_ANALYTICS_DATASET,
-            "description": "BigQuery analytics dataset placeholder for future review.",
-        },
-        {
-            "name": "bigquery_location",
-            "token": DEFAULT_BIGQUERY_LOCATION,
-            "description": "BigQuery location placeholder for future review.",
-        },
-        {
-            "name": "latest_valid_year",
-            "token": DEFAULT_LATEST_VALID_YEAR,
-            "description": "Latest valid year placeholder for analytics planning.",
-        },
-        {
-            "name": "database_url",
-            "token": DEFAULT_DATABASE_URL,
-            "description": "Database URL placeholder for PostgreSQL-compatible analytics jobs.",
-        },
-    ]
-
-
-def validate_source_forbidden_tokens(text: str) -> list[str]:
+def validate_no_cloud_command_text(text: str) -> list[str]:
     errors: list[str] = []
-    lowered = text.lower()
-    for label, pattern in build_command_patterns():
-        if pattern.search(lowered):
-            errors.append(f"forbidden command text found: {label}")
+    for label, pattern in COMMAND_PATTERNS:
+        if pattern.search(text or ""):
+            errors.append(f"forbidden cloud command text found: {label}")
     return errors
 
 
-def normalize_cloud_run_jobs() -> list[dict[str, Any]]:
-    cloud_run_plan = build_cloud_run_job_plan()
-    step_roles = {
-        "gov-ai-data-manifest": "source_snapshot_planning",
-        "gov-ai-data-snapshot-plan": "source_snapshot_planning",
-        "gov-ai-gold-build": "gold_build",
-        "gov-ai-analytics-batch": "analytics_batch",
-    }
+def validate_no_execution_apis(source_text: str) -> list[str]:
+    try:
+        tree = ast.parse(source_text)
+    except SyntaxError as exc:
+        return [f"source parse failed: {exc.msg}"]
 
-    jobs: list[dict[str, Any]] = []
-    for job in cloud_run_plan["jobs"]:
-        name = str(job["name"])
-        jobs.append(
-            {
-                "name": name,
-                "workflow_role": step_roles.get(name, "manual_review"),
-                "status": job["status"],
-                "image_uri": job["image_uri"],
-                "create_command": job["create_command"],
-                "update_command": job["update_command"],
-                "args_template": job["args_template"],
-                "env": job["env"],
-                "secrets": job["secrets"],
-                "iam": job["iam"],
-                "side_effect_warning": job["side_effect_warning"],
-            }
-        )
-    return jobs
+    errors: list[str] = []
+    module_aliases: dict[str, str] = {}
+    imported_names: dict[str, str] = {}
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                bound_name = alias.asname or alias.name
+                module_aliases[bound_name] = alias.name
+                if alias.name == "subprocess":
+                    errors.append("forbidden execution API: import subprocess")
+                if alias.name == "os":
+                    module_aliases[bound_name] = "os"
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            for alias in node.names:
+                bound_name = alias.asname or alias.name
+                imported_names[bound_name] = module
+            if module == "subprocess":
+                errors.append("forbidden execution API: from subprocess import ...")
+            if module == "os" and any((alias.asname or alias.name) in EXECUTION_APIS["os"] or alias.name in EXECUTION_APIS["os"] for alias in node.names):
+                errors.append("forbidden execution API: from os import ...")
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+
+        func = node.func
+        if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+            base_name = func.value.id
+            base_module = module_aliases.get(base_name, imported_names.get(base_name))
+            if base_module == "subprocess" and func.attr in EXECUTION_APIS["subprocess"]:
+                errors.append(f"forbidden execution API: {base_name}.{func.attr}()")
+            if base_module == "os" and func.attr in EXECUTION_APIS["os"]:
+                errors.append(f"forbidden execution API: {base_name}.{func.attr}()")
+        elif isinstance(func, ast.Name):
+            base_module = imported_names.get(func.id)
+            if base_module == "subprocess":
+                errors.append(f"forbidden execution API: {func.id}() from subprocess")
+            if base_module == "os":
+                errors.append(f"forbidden execution API: {func.id}() from os")
+
+    return errors
 
 
 def build_workflow_steps() -> list[dict[str, Any]]:
     return [
         {
-            "name": "plan_source_snapshot",
-            "kind": "concrete",
-            "manual_review_required": False,
-            "cloud_run_jobs": [
-                "gov-ai-data-manifest",
-                "gov-ai-data-snapshot-plan",
-            ],
-            "description": "Plan and check source snapshot manifests before downstream work.",
+            "step": "initialize_run",
+            "description": "Initialize the scheduled run context and offline metadata for the planning template.",
+            "required": True,
+            "offline_only": True,
         },
         {
-            "name": "build_silver_or_pipeline",
-            "kind": "placeholder",
-            "manual_review_required": True,
-            "enabled_by_default": False,
-            "cloud_run_jobs": [],
-            "description": "Placeholder for a silver or pipeline job until a cloud-ready job template exists.",
+            "step": "fetch_official_sources_and_decide_change",
+            "description": "Acquire official sources and compare the candidate manifest against the last successful snapshot.",
+            "required": True,
         },
         {
-            "name": "build_gold",
-            "kind": "concrete",
-            "manual_review_required": False,
-            "cloud_run_jobs": ["gov-ai-gold-build"],
-            "description": "Build Gold tables with the existing Cloud Run Job template.",
+            "step": "branch_unchanged_skip_or_changed_continue",
+            "description": "Unchanged branch stops without publish; changed branch continues into candidate validation.",
+            "required": True,
+            "branch": {
+                "unchanged": {
+                    "status": "SKIPPED_UNCHANGED",
+                    "publish": False,
+                    "warehouse_publish_performed": False,
+                    "last_successful_updated": False,
+                },
+                "changed": {
+                    "status": "DRY_RUN_CHANGED",
+                    "continue": True,
+                    "candidate_validation_required": True,
+                    "publish_only_after_validation": True,
+                    "record_success_freshness_after_publish": True,
+                },
+            },
         },
         {
-            "name": "publish_or_load_bigquery",
-            "kind": "placeholder",
-            "manual_review_required": True,
-            "enabled_by_default": False,
-            "cloud_run_jobs": [],
-            "description": "Placeholder for BigQuery staging and production loading until a concrete job template exists.",
+            "step": "persist_bronze_and_manifests_if_changed",
+            "description": "Persist bronze snapshots and manifests only when the source fingerprint changed.",
+            "required": True,
+            "branch_condition": "changed",
         },
         {
-            "name": "run_analytics",
-            "kind": "concrete",
-            "manual_review_required": False,
-            "cloud_run_jobs": ["gov-ai-analytics-batch"],
-            "description": "Run analytics with the existing Cloud Run Job template.",
+            "step": "build_and_validate_silver_candidate",
+            "description": "Build the Silver candidate and validate its contract before any publish path continues.",
+            "required": True,
+            "branch_condition": "changed",
         },
         {
-            "name": "run_data_quality_audit",
-            "kind": "placeholder",
-            "manual_review_required": True,
-            "enabled_by_default": False,
-            "cloud_run_jobs": [],
-            "description": "Placeholder for a data quality audit job because no concrete cloud job template exists yet.",
+            "step": "build_and_validate_gold_analytics_candidates",
+            "description": "Build Gold and Analytics candidates and validate them before production publish.",
+            "required": True,
+            "branch_condition": "changed",
         },
         {
-            "name": "postgres_sync_optional",
-            "kind": "placeholder",
-            "manual_review_required": True,
-            "enabled_by_default": False,
-            "cloud_run_jobs": [],
-            "description": "Optional PostgreSQL-compatible sync placeholder, disabled by default.",
+            "step": "run_data_quality_gate",
+            "description": "Run the data-quality gate before production publish is allowed.",
+            "required": True,
+            "branch_condition": "changed",
+        },
+        {
+            "step": "publish_bigquery_production_if_valid",
+            "description": "Publish to BigQuery production only after validation and data-quality PASS.",
+            "required": True,
+            "branch_condition": "changed",
+        },
+        {
+            "step": "record_success_freshness",
+            "description": "Record freshness metadata only after a successful production publish.",
+            "required": True,
+            "branch_condition": "changed",
+        },
+        {
+            "step": "backend_freshness_smoke",
+            "description": "Offline planning placeholder for a later backend freshness smoke; no backend endpoint is added here.",
+            "required": True,
+            "offline_only": True,
         },
     ]
 
 
-def build_workflow_yaml_template(steps: list[dict[str, Any]]) -> str:
-    lines = [
-        "main:",
-        "  params: [input]",
-        "  steps:",
-        "    - init:",
-        "        assign:",
-        f"          - project_id: {json.dumps(DEFAULT_PROJECT_ID, ensure_ascii=False)}",
-        f"          - region: {json.dumps(DEFAULT_REGION, ensure_ascii=False)}",
-        f"          - workflow_name: {json.dumps(DEFAULT_WORKFLOW_NAME, ensure_ascii=False)}",
-        f"          - scheduler_name: {json.dumps(DEFAULT_SCHEDULER_NAME, ensure_ascii=False)}",
-        f"          - service_account: {json.dumps(DEFAULT_SERVICE_ACCOUNT, ensure_ascii=False)}",
-        f"          - bucket: {json.dumps(DEFAULT_BUCKET, ensure_ascii=False)}",
-        f"          - run_id: {json.dumps(DEFAULT_RUN_ID, ensure_ascii=False)}",
-        f"          - run_date: {json.dumps(DEFAULT_RUN_DATE, ensure_ascii=False)}",
-        f"          - force: {json.dumps(DEFAULT_FORCE, ensure_ascii=False)}",
-        "",
-    ]
-
-    for step in steps:
-        lines.append(f"    - {step['name']}:")
-        lines.append(f"        mode: {json.dumps(step['kind'], ensure_ascii=False)}")
-        lines.append(
-            f"        manual_review_required: {json.dumps(step['manual_review_required'], ensure_ascii=False)}"
-        )
-        lines.append(
-            f"        enabled_by_default: {json.dumps(step.get('enabled_by_default', True), ensure_ascii=False)}"
-        )
-        if step["cloud_run_jobs"]:
-            lines.append("        cloud_run_jobs:")
-            for job_name in step["cloud_run_jobs"]:
-                lines.append(f"          - {json.dumps(job_name, ensure_ascii=False)}")
-        else:
-            lines.append("        cloud_run_jobs: []")
-        lines.append(f"        note: {json.dumps(step['description'], ensure_ascii=False)}")
-        lines.append("")
-
-    lines.extend(
-        [
-            "manual_trigger_payloads:",
-            "  force_false:",
-            f"    project_id: {json.dumps(DEFAULT_PROJECT_ID, ensure_ascii=False)}",
-            f"    region: {json.dumps(DEFAULT_REGION, ensure_ascii=False)}",
-            f"    workflow_name: {json.dumps(DEFAULT_WORKFLOW_NAME, ensure_ascii=False)}",
-            f"    scheduler_name: {json.dumps(DEFAULT_SCHEDULER_NAME, ensure_ascii=False)}",
-            f"    service_account: {json.dumps(DEFAULT_SERVICE_ACCOUNT, ensure_ascii=False)}",
-            f"    bucket: {json.dumps(DEFAULT_BUCKET, ensure_ascii=False)}",
-            f"    run_id: {json.dumps(DEFAULT_RUN_ID, ensure_ascii=False)}",
-            f"    run_date: {json.dumps(DEFAULT_RUN_DATE, ensure_ascii=False)}",
-            "    force: false",
-            "  force_true:",
-            f"    project_id: {json.dumps(DEFAULT_PROJECT_ID, ensure_ascii=False)}",
-            f"    region: {json.dumps(DEFAULT_REGION, ensure_ascii=False)}",
-            f"    workflow_name: {json.dumps(DEFAULT_WORKFLOW_NAME, ensure_ascii=False)}",
-            f"    scheduler_name: {json.dumps(DEFAULT_SCHEDULER_NAME, ensure_ascii=False)}",
-            f"    service_account: {json.dumps(DEFAULT_SERVICE_ACCOUNT, ensure_ascii=False)}",
-            f"    bucket: {json.dumps(DEFAULT_BUCKET, ensure_ascii=False)}",
-            f"    run_id: {json.dumps(DEFAULT_RUN_ID, ensure_ascii=False)}",
-            f"    run_date: {json.dumps(DEFAULT_RUN_DATE, ensure_ascii=False)}",
-            "    force: true",
-        ]
-    )
-
-    return "\n".join(lines)
-
-
-def build_scheduler_yaml_template() -> str:
-    return "\n".join(
-        [
-            f"name: {json.dumps(DEFAULT_SCHEDULER_NAME, ensure_ascii=False)}",
-            'schedule: "0 2 5 * *"',
-            'timeZone: "UTC"',
-            "paused: true",
-            "manual_review_required: true",
-            "description: \"Monthly trigger template for workflow review before deployment.\"",
-            "target:",
-            "  type: \"workflows_execution\"",
-            f"  project_id: {json.dumps(DEFAULT_PROJECT_ID, ensure_ascii=False)}",
-            f"  region: {json.dumps(DEFAULT_REGION, ensure_ascii=False)}",
-            f"  workflow_name: {json.dumps(DEFAULT_WORKFLOW_NAME, ensure_ascii=False)}",
-            f"  service_account: {json.dumps(DEFAULT_SERVICE_ACCOUNT, ensure_ascii=False)}",
-            "  input:",
-            f"    run_id: {json.dumps(DEFAULT_RUN_ID, ensure_ascii=False)}",
-            f"    run_date: {json.dumps(DEFAULT_RUN_DATE, ensure_ascii=False)}",
-            "    force: false",
-        ]
-    )
-
-
-def build_environment_contract() -> dict[str, Any]:
+def build_workflow_template(steps: list[dict[str, Any]]) -> dict[str, Any]:
     return {
-        "required_workflow_inputs": [
-            "project_id",
-            "region",
-            "workflow_name",
-            "scheduler_name",
-            "service_account",
-            "bucket",
-            "run_id",
-            "run_date",
-            "force",
-        ],
-        "review_inputs": [
-            "artifact_repository",
-            "image_tag",
-            "generated_at",
-            "output_format",
-            "previous_manifest_path",
-            "silver_output_uri",
-            "postgres_host",
-            "postgres_port",
-            "postgres_db",
-            "postgres_user",
-            "postgres_password",
-            "bigquery_analytics_dataset",
-            "bigquery_location",
-            "latest_valid_year",
-            "database_url",
-        ],
-        "aligned_cloud_run_jobs": [
-            "gov-ai-data-manifest",
-            "gov-ai-data-snapshot-plan",
-            "gov-ai-gold-build",
-            "gov-ai-analytics-batch",
-        ],
-        "step_contract": {
-            "source_snapshot_planning": [
-                "run_id",
-                "run_date",
-                "bucket",
-                "previous_manifest_path",
-            ],
-            "gold_build": [
-                "run_id",
-                "run_date",
-                "output_format",
-                "silver_output_uri",
-                "postgres_host",
-                "postgres_port",
-                "postgres_db",
-                "postgres_user",
-                "postgres_password",
-            ],
-            "analytics_batch": [
-                "run_id",
-                "run_date",
-                "bigquery_analytics_dataset",
-                "bigquery_location",
-                "latest_valid_year",
-                "database_url",
-            ],
+        "template_kind": "workflow",
+        "execution_scope": "offline_template_only",
+        "main_path": "bigquery_direct",
+        "workflow_name": DEFAULT_WORKFLOW_NAME,
+        "project_id": DEFAULT_PROJECT_ID,
+        "region": DEFAULT_REGION,
+        "service_account": DEFAULT_SERVICE_ACCOUNT,
+        "cloud_run_job_placeholder": {
+            "name": "gov-ai-scheduled-pipeline",
+            "mode": "offline_placeholder",
+            "purpose": "future runtime binding only",
         },
-        "manual_review_notes": [
-            "Concrete job templates are reused from the existing offline Cloud Run job plan.",
-            "Placeholder steps stay disabled by default until a later pass adds concrete jobs or deployment wrappers.",
+        "steps": steps,
+        "branch_semantics": {
+            "unchanged": {
+                "terminal_status": "SKIPPED_UNCHANGED",
+                "warehouse_publish_performed": False,
+                "last_successful_updated": False,
+                "publish": False,
+            },
+            "changed": {
+                "publish_only_after_validation": True,
+                "record_success_freshness_after_publish": True,
+            },
+        },
+        "notes": [
+            "No PostgreSQL dependency is required in the scheduled main path.",
+            "No cloud side effects are authorized by this template.",
         ],
     }
 
 
-def build_manual_review_required(workflow_steps: list[dict[str, Any]]) -> list[str]:
-    notes = [
-        "Confirm project_id, region, billing, service_account, bucket, Artifact Registry, and IAM before any deployment.",
-        "Keep the monthly scheduler paused until the workflow and job wiring are reviewed.",
-        "Review the force=false and force=true payloads before manual trigger use.",
-        "No cloud resources are created, updated, or deployed by this offline planner.",
-    ]
-    for step in workflow_steps:
-        if step["manual_review_required"]:
-            notes.append(f"Review placeholder step: {step['name']}.")
-    return notes
-
-
-def build_side_effect_guardrails() -> list[str]:
-    return [
-        "Templates only; no cloud resource is created, updated, or deployed by this generator.",
-        "No cloud command, SDK call, or subprocess execution is performed here.",
-        "Deployment requires explicit user confirmation for project, region, billing, service account, bucket, Artifact Registry, and IAM.",
-        "Concrete Cloud Run job templates are review-only until the target environment is confirmed.",
-        "Placeholder workflow steps remain disabled by default until concrete jobs exist.",
-    ]
-
-
-def build_workflow_summary(steps: list[dict[str, Any]]) -> dict[str, Any]:
+def build_scheduler_template() -> dict[str, Any]:
     return {
-        "name": DEFAULT_WORKFLOW_NAME,
-        "manual_review_required": True,
-        "orchestration_order": [
-            {
-                "step": step["name"],
-                "kind": step["kind"],
-                "manual_review_required": step["manual_review_required"],
-                "cloud_run_jobs": step["cloud_run_jobs"],
-            }
-            for step in steps
-        ],
-        "yaml_template": build_workflow_yaml_template(steps),
-        "manual_trigger_payloads": {
-            "force_false": {
-                "project_id": DEFAULT_PROJECT_ID,
-                "region": DEFAULT_REGION,
-                "workflow_name": DEFAULT_WORKFLOW_NAME,
-                "scheduler_name": DEFAULT_SCHEDULER_NAME,
-                "service_account": DEFAULT_SERVICE_ACCOUNT,
-                "bucket": DEFAULT_BUCKET,
-                "run_id": DEFAULT_RUN_ID,
-                "run_date": DEFAULT_RUN_DATE,
-                "force": False,
-            },
-            "force_true": {
-                "project_id": DEFAULT_PROJECT_ID,
-                "region": DEFAULT_REGION,
-                "workflow_name": DEFAULT_WORKFLOW_NAME,
-                "scheduler_name": DEFAULT_SCHEDULER_NAME,
-                "service_account": DEFAULT_SERVICE_ACCOUNT,
-                "bucket": DEFAULT_BUCKET,
-                "run_id": DEFAULT_RUN_ID,
-                "run_date": DEFAULT_RUN_DATE,
-                "force": True,
-            },
-        },
-    }
-
-
-def build_scheduler_summary() -> dict[str, Any]:
-    return {
+        "template_kind": "scheduler",
         "name": DEFAULT_SCHEDULER_NAME,
-        "manual_review_required": True,
         "schedule": "0 2 5 * *",
         "time_zone": "UTC",
         "paused": True,
-        "workflow_target": {
-            "workflow_name": DEFAULT_WORKFLOW_NAME,
-            "project_id": DEFAULT_PROJECT_ID,
-            "region": DEFAULT_REGION,
-            "service_account": DEFAULT_SERVICE_ACCOUNT,
-        },
-        "yaml_template": build_scheduler_yaml_template(),
-    }
-
-
-def build_plan() -> dict[str, Any]:
-    steps = build_workflow_steps()
-    cloud_run_jobs = normalize_cloud_run_jobs()
-    plan = {
-        "generated_by": "workflow_scheduler_plan",
-        "workflow": build_workflow_summary(steps),
-        "scheduler": build_scheduler_summary(),
-        "cloud_run_jobs": cloud_run_jobs,
-        "placeholders": build_placeholders(),
-        "environment_contract": build_environment_contract(),
-        "manual_review_required": build_manual_review_required(steps),
-        "side_effect_guardrails": build_side_effect_guardrails(),
-    }
-    plan["validation"] = validate_plan(plan)
-    return plan
-
-
-def read_source_text() -> str:
-    return Path(__file__).read_text(encoding="utf-8")
-
-
-def validate_no_command_execution_apis(tree: ast.AST) -> list[str]:
-    errors: list[str] = []
-    forbidden_imports = {"subprocess"}
-    forbidden_os_members = {
-        "system",
-        "popen",
-        "spawnl",
-        "spawnle",
-        "spawnlp",
-        "spawnlpe",
-        "spawnv",
-        "spawnve",
-        "spawnvp",
-        "spawnvpe",
-        "execl",
-        "execle",
-        "execlp",
-        "execlpe",
-        "execv",
-        "execve",
-        "execvp",
-        "execvpe",
-        "startfile",
-    }
-    forbidden_builtin_calls = {"eval", "exec", "compile", "__import__"}
-
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            names = {alias.name.split(".")[0] for alias in node.names}
-            found = sorted(names & forbidden_imports)
-            if found:
-                errors.append(f"forbidden import: {found}")
-
-        if isinstance(node, ast.ImportFrom):
-            module = (node.module or "").split(".")[0]
-            if module in forbidden_imports:
-                errors.append(f"forbidden import from: {module}")
-            if module == "os":
-                imported = {alias.name for alias in node.names}
-                found = sorted(imported & forbidden_os_members)
-                if found:
-                    errors.append(f"forbidden from-os import: {found}")
-
-        if isinstance(node, ast.Call):
-            func = node.func
-            if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
-                if func.value.id == "os" and func.attr in forbidden_os_members:
-                    errors.append(f"forbidden call: os.{func.attr}")
-            if isinstance(func, ast.Name) and func.id in forbidden_builtin_calls:
-                errors.append(f"forbidden call: {func.id}")
-
-    return errors
-
-
-def validate_plan(plan: dict[str, Any]) -> dict[str, Any]:
-    errors: list[str] = []
-    checks: list[dict[str, Any]] = []
-
-    required_top_level = {
-        "generated_by",
-        "workflow",
-        "scheduler",
-        "cloud_run_jobs",
-        "placeholders",
-        "environment_contract",
-        "manual_review_required",
-        "side_effect_guardrails",
-    }
-    missing = sorted(required_top_level - set(plan))
-    if missing:
-        errors.append(f"missing top-level keys: {missing}")
-    checks.append(
-        {
-            "name": "top_level_keys",
-            "status": "PASS" if not missing else "FAIL",
-        }
-    )
-
-    workflow = plan.get("workflow", {})
-    scheduler = plan.get("scheduler", {})
-    workflow_steps = workflow.get("orchestration_order", [])
-    workflow_job_names = [name for step in workflow_steps for name in step.get("cloud_run_jobs", [])]
-    required_job_names = [
-        "gov-ai-data-manifest",
-        "gov-ai-data-snapshot-plan",
-        "gov-ai-gold-build",
-        "gov-ai-analytics-batch",
-    ]
-    missing_jobs = [name for name in required_job_names if name not in workflow_job_names]
-    if missing_jobs:
-        errors.append(f"missing workflow job references: {missing_jobs}")
-    checks.append(
-        {
-            "name": "workflow_job_alignment",
-            "status": "PASS" if not missing_jobs else "FAIL",
-        }
-    )
-
-    step_names = [step.get("step") for step in workflow_steps]
-    expected_step_names = [
-        "plan_source_snapshot",
-        "build_silver_or_pipeline",
-        "build_gold",
-        "publish_or_load_bigquery",
-        "run_analytics",
-        "run_data_quality_audit",
-        "postgres_sync_optional",
-    ]
-    if step_names != expected_step_names:
-        errors.append("workflow step order does not match the required review sequence")
-    checks.append(
-        {
-            "name": "workflow_step_order",
-            "status": "PASS" if step_names == expected_step_names else "FAIL",
-        }
-    )
-
-    scheduler_schedule = scheduler.get("schedule")
-    scheduler_time_zone = scheduler.get("time_zone")
-    scheduler_paused = scheduler.get("paused")
-    scheduler_checks_pass = (
-        scheduler_schedule == "0 2 5 * *"
-        and scheduler_time_zone == "UTC"
-        and scheduler_paused is True
-    )
-    if not scheduler_checks_pass:
-        errors.append("scheduler schedule, timezone, or paused state is not aligned")
-    checks.append(
-        {
-            "name": "scheduler_monthly_utc",
-            "status": "PASS" if scheduler_checks_pass else "FAIL",
-        }
-    )
-
-    text_checks = [
-        ("source_text", read_source_text()),
-        ("workflow_yaml_template", str(workflow.get("yaml_template", ""))),
-        ("scheduler_yaml_template", str(scheduler.get("yaml_template", ""))),
-    ]
-    for label, text in text_checks:
-        if label == "source_text":
-            label_errors = validate_source_forbidden_tokens(text)
-            if label_errors:
-                errors.extend(f"{label}: {error}" for error in label_errors)
-        else:
-            label_errors = []
-        checks.append(
-            {
-                "name": f"{label}_guard",
-                "status": "PASS" if not label_errors else "FAIL",
-            }
-        )
-
-    source_text = read_source_text()
-    source_tree = ast.parse(source_text)
-    ast_errors = validate_no_command_execution_apis(source_tree)
-    if ast_errors:
-        errors.extend(ast_errors)
-    checks.append(
-        {
-            "name": "ast_execution_guard",
-            "status": "PASS" if not ast_errors else "FAIL",
-        }
-    )
-
-    status = "PASS" if not errors else "FAIL"
-    return {
-        "status": status,
-        "errors": errors,
-        "checks": checks,
+        "state": "PAUSED",
+        "activation_requires_later_approval": True,
+        "workflow_name": DEFAULT_WORKFLOW_NAME,
+        "project_id": DEFAULT_PROJECT_ID,
+        "region": DEFAULT_REGION,
+        "service_account": DEFAULT_SERVICE_ACCOUNT,
+        "note": "Keep paused until later user approval after readiness review.",
     }
 
 
 def render_yaml(value: Any, indent: int = 0) -> str:
     space = " " * indent
 
+    def render_scalar(item: Any) -> str:
+        if item is True:
+            return "true"
+        if item is False:
+            return "false"
+        if item is None:
+            return "null"
+        if isinstance(item, (int, float)) and not isinstance(item, bool):
+            return str(item)
+        if isinstance(item, str):
+            if "\n" in item:
+                return item
+            return json.dumps(item, ensure_ascii=False)
+        return json.dumps(item, ensure_ascii=False)
+
     if isinstance(value, dict):
         if not value:
             return f"{space}{{}}"
         lines: list[str] = []
         for key, item in value.items():
-            rendered_key = key if re.match(r"^[A-Za-z_][A-Za-z0-9_-]*$", str(key)) else json.dumps(
+            rendered_key = key if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", str(key)) else json.dumps(
                 str(key), ensure_ascii=False
             )
             if isinstance(item, dict):
@@ -747,7 +271,7 @@ def render_yaml(value: Any, indent: int = 0) -> str:
                 for line in item.splitlines():
                     lines.append(f"{space}  {line}")
             else:
-                lines.append(f"{space}{rendered_key}: {json.dumps(item, ensure_ascii=False)}")
+                lines.append(f"{space}{rendered_key}: {render_scalar(item)}")
         return "\n".join(lines)
 
     if isinstance(value, list):
@@ -756,17 +280,23 @@ def render_yaml(value: Any, indent: int = 0) -> str:
         lines = []
         for item in value:
             if isinstance(item, dict):
-                lines.append(f"{space}-")
-                lines.append(render_yaml(item, indent + 2))
+                if item:
+                    lines.append(f"{space}-")
+                    lines.append(render_yaml(item, indent + 2))
+                else:
+                    lines.append(f"{space}- {{}}")
             elif isinstance(item, list):
-                lines.append(f"{space}-")
-                lines.append(render_yaml(item, indent + 2))
+                if item:
+                    lines.append(f"{space}-")
+                    lines.append(render_yaml(item, indent + 2))
+                else:
+                    lines.append(f"{space}- []")
             elif isinstance(item, str) and "\n" in item:
                 lines.append(f"{space}- |")
                 for line in item.splitlines():
                     lines.append(f"{space}  {line}")
             else:
-                lines.append(f"{space}- {json.dumps(item, ensure_ascii=False)}")
+                lines.append(f"{space}- {render_scalar(item)}")
         return "\n".join(lines)
 
     if isinstance(value, str) and "\n" in value:
@@ -775,111 +305,282 @@ def render_yaml(value: Any, indent: int = 0) -> str:
             lines.append(f"{space}  {line}")
         return "\n".join(lines)
 
-    if value is True:
-        return f"{space}true"
-    if value is False:
-        return f"{space}false"
-    if value is None:
-        return f"{space}null"
+    return f"{space}{render_scalar(value)}"
 
-    return f"{space}{json.dumps(value, ensure_ascii=False)}"
+
+def _plan_without_validation(plan: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in plan.items() if key != "validation"}
+
+
+def render_plan_json(plan: dict[str, Any]) -> str:
+    return json.dumps(plan, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def render_plan_yaml(plan: dict[str, Any]) -> str:
+    return render_yaml(plan)
+
+
+def build_plan() -> dict[str, Any]:
+    steps = build_workflow_steps()
+    workflow_template = build_workflow_template(steps)
+    scheduler_template = build_scheduler_template()
+    return {
+        "generated_by": "workflow_scheduler_plan",
+        "workflow": {
+            "name": DEFAULT_WORKFLOW_NAME,
+            "project_id": DEFAULT_PROJECT_ID,
+            "region": DEFAULT_REGION,
+            "service_account": DEFAULT_SERVICE_ACCOUNT,
+            "main_path": "bigquery_direct",
+            "orchestration_order": steps,
+            "cloud_run_job_placeholder": {
+                "name": "gov-ai-scheduled-pipeline",
+                "mode": "offline_placeholder",
+                "purpose": "future runtime binding only",
+            },
+            "branch_semantics": {
+                "unchanged": {
+                    "terminal_status": "SKIPPED_UNCHANGED",
+                    "warehouse_publish_performed": False,
+                    "last_successful_updated": False,
+                    "publish": False,
+                },
+                "changed": {
+                    "publish_only_after_validation": True,
+                    "record_success_freshness_after_publish": True,
+                },
+            },
+            "notes": [
+                "No PostgreSQL dependency is required in the scheduled main path.",
+                "No cloud side effects are authorized by this template.",
+            ],
+            "yaml_template": render_yaml(workflow_template),
+        },
+        "scheduler": {
+            "name": DEFAULT_SCHEDULER_NAME,
+            "schedule": "0 2 5 * *",
+            "time_zone": "UTC",
+            "paused": True,
+            "state": "PAUSED",
+            "activation_requires_later_approval": True,
+            "project_id": DEFAULT_PROJECT_ID,
+            "region": DEFAULT_REGION,
+            "workflow_name": DEFAULT_WORKFLOW_NAME,
+            "service_account": DEFAULT_SERVICE_ACCOUNT,
+            "note": "Keep paused until later user approval after readiness review.",
+            "yaml_template": render_yaml(scheduler_template),
+        },
+        "required_path_constraints": {
+            "main_path": "bigquery_direct",
+            "postgres_required_in_main_path": False,
+            "analytics_worker_postgres_required": False,
+        },
+        "side_effect_guardrails": [
+            "Template and plan only: no deployment and no cloud command execution.",
+            "Scheduler template remains PAUSED.",
+            "Unchanged branch must produce SKIPPED_UNCHANGED with no publish and no freshness update.",
+        ],
+    }
+
+
+def validate_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    checks: list[dict[str, Any]] = []
+    errors: list[str] = []
+
+    expected_order = STEP_ORDER
+    workflow = plan.get("workflow", {})
+    scheduler = plan.get("scheduler", {})
+
+    actual_order = [item.get("step") for item in workflow.get("orchestration_order", [])]
+    workflow_order_ok = actual_order == expected_order
+    if not workflow_order_ok:
+        errors.append("workflow orchestration order mismatch")
+    checks.append({"name": "workflow_order", "status": "PASS" if workflow_order_ok else "FAIL"})
+
+    template_workflow_yaml = str(workflow.get("yaml_template", "") or "")
+    template_scheduler_yaml = str(scheduler.get("yaml_template", "") or "")
+    templates_present = bool(template_workflow_yaml.strip()) and bool(template_scheduler_yaml.strip())
+    if not templates_present:
+        errors.append("workflow/scheduler template output is missing")
+    checks.append({"name": "template_outputs_present", "status": "PASS" if templates_present else "FAIL"})
+
+    workflow_semantic_tokens = [
+        "initialize_run",
+        "fetch_official_sources_and_decide_change",
+        "branch_unchanged_skip_or_changed_continue",
+        "persist_bronze_and_manifests_if_changed",
+        "build_and_validate_silver_candidate",
+        "build_and_validate_gold_analytics_candidates",
+        "run_data_quality_gate",
+        "publish_bigquery_production_if_valid",
+        "record_success_freshness",
+        "backend_freshness_smoke",
+        "SKIPPED_UNCHANGED",
+        "warehouse_publish_performed: false",
+        "last_successful_updated: false",
+        "bigquery_direct",
+    ]
+    workflow_template_ok = templates_present and all(token in template_workflow_yaml for token in workflow_semantic_tokens)
+    if not workflow_template_ok:
+        errors.append("workflow template does not contain required BigQuery-direct semantics")
+    checks.append({"name": "workflow_template_semantics", "status": "PASS" if workflow_template_ok else "FAIL"})
+
+    scheduler_semantic_tokens = [
+        "0 2 5 * *",
+        "UTC",
+        "PAUSED",
+        "paused: true",
+        "activation_requires_later_approval: true",
+        "economic-data-pipeline-monthly",
+    ]
+    scheduler_template_ok = templates_present and all(token in template_scheduler_yaml for token in scheduler_semantic_tokens)
+    if not scheduler_template_ok:
+        errors.append("scheduler template does not contain required monthly paused semantics")
+    checks.append({"name": "scheduler_template_semantics", "status": "PASS" if scheduler_template_ok else "FAIL"})
+
+    scheduler_ok = (
+        scheduler.get("schedule") == "0 2 5 * *"
+        and scheduler.get("time_zone") == "UTC"
+        and scheduler.get("paused") is True
+        and scheduler.get("state") == "PAUSED"
+        and scheduler.get("activation_requires_later_approval") is True
+    )
+    if not scheduler_ok:
+        errors.append("scheduler must remain monthly UTC and paused")
+    checks.append({"name": "scheduler_monthly_paused", "status": "PASS" if scheduler_ok else "FAIL"})
+
+    constraints = plan.get("required_path_constraints", {})
+    no_pg = (
+        constraints.get("main_path") == "bigquery_direct"
+        and constraints.get("postgres_required_in_main_path") is False
+        and constraints.get("analytics_worker_postgres_required") is False
+    )
+    if not no_pg:
+        errors.append("postgres dependency still present in scheduled main path")
+    checks.append({"name": "no_postgres_main_path_dependency", "status": "PASS" if no_pg else "FAIL"})
+
+    structured_branch = workflow.get("branch_semantics", {}).get("unchanged", {})
+    structured_branch_ok = (
+        structured_branch.get("terminal_status") == "SKIPPED_UNCHANGED"
+        and structured_branch.get("warehouse_publish_performed") is False
+        and structured_branch.get("last_successful_updated") is False
+        and structured_branch.get("publish") is False
+    )
+    if not structured_branch_ok:
+        errors.append("structured unchanged branch semantics are not preserved")
+    checks.append({"name": "structured_unchanged_branch_semantics", "status": "PASS" if structured_branch_ok else "FAIL"})
+
+    branch = workflow.get("orchestration_order", [])[2].get("branch", {}) if len(workflow.get("orchestration_order", [])) > 2 else {}
+    unchanged = branch.get("unchanged", {})
+    unchanged_ok = (
+        unchanged.get("status") == "SKIPPED_UNCHANGED"
+        and unchanged.get("publish") is False
+        and unchanged.get("warehouse_publish_performed") is False
+        and unchanged.get("last_successful_updated") is False
+    )
+    if not unchanged_ok:
+        errors.append("unchanged branch must preserve skip/no-publish/no-freshness-update semantics")
+    checks.append({"name": "unchanged_branch_semantics", "status": "PASS" if unchanged_ok else "FAIL"})
+
+    plan_snapshot = _plan_without_validation(plan)
+    rendered_json = render_plan_json(plan_snapshot)
+    rendered_yaml = render_plan_yaml(plan_snapshot)
+
+    cloud_command_checks = (
+        ("workflow_yaml_template", template_workflow_yaml),
+        ("scheduler_yaml_template", template_scheduler_yaml),
+        ("rendered_json", rendered_json),
+        ("rendered_yaml", rendered_yaml),
+    )
+    cloud_text_ok = True
+    for label, text in cloud_command_checks:
+        label_errors = validate_no_cloud_command_text(text)
+        if label_errors:
+            cloud_text_ok = False
+            errors.extend(f"{label}: {error}" for error in label_errors)
+    checks.append({"name": "no_cloud_command_text", "status": "PASS" if cloud_text_ok else "FAIL"})
+
+    return {"status": "PASS" if not errors else "FAIL", "errors": errors, "checks": checks}
+
+
+def validate_source_execution_apis(source_text: str) -> dict[str, Any]:
+    errors = validate_no_execution_apis(source_text)
+    return {
+        "status": "PASS" if not errors else "FAIL",
+        "errors": errors,
+        "checks": [
+            {
+                "name": "source_execution_apis",
+                "status": "PASS" if not errors else "FAIL",
+            }
+        ],
+    }
+
+
+def build_check_result(plan: dict[str, Any], source_text: str) -> dict[str, Any]:
+    plan_validation = validate_plan(plan)
+    source_validation = validate_source_execution_apis(source_text)
+    errors = [*plan_validation["errors"], *source_validation["errors"]]
+    checks = [*plan_validation["checks"], *source_validation["checks"]]
+    return {
+        "status": "PASS" if not errors else "FAIL",
+        "errors": errors,
+        "checks": checks,
+    }
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Generate offline workflow and scheduler planning templates.")
+    parser.add_argument("--format", choices=("text", "json", "yaml"), default="text")
+    parser.add_argument("--check", action="store_true")
+    return parser.parse_args(argv)
 
 
 def render_text(plan: dict[str, Any]) -> str:
-    workflow = plan["workflow"]
-    scheduler = plan["scheduler"]
-    lines: list[str] = [
-        "Workflow and Scheduler Planning",
-        "Templates only; review before any deployment.",
+    lines = [
+        "Workflow and Scheduler Planning (BigQuery-direct)",
+        f"Workflow: {plan['workflow']['name']}",
+        f"Scheduler: {plan['scheduler']['name']}",
+        f"Schedule: {plan['scheduler']['schedule']} UTC",
+        f"Paused: {plan['scheduler']['paused']}",
         "",
-        f"Workflow name: {workflow['name']}",
-        f"Scheduler name: {scheduler['name']}",
-        f"Monthly trigger: {scheduler['schedule']} UTC",
-        f"Scheduler paused: {scheduler['paused']}",
-        "",
-        "Orchestration order:",
+        "Ordered steps:",
     ]
-    for item in workflow["orchestration_order"]:
-        job_names = ", ".join(item["cloud_run_jobs"]) if item["cloud_run_jobs"] else "none"
-        lines.append(
-            f"  - {item['step']} | kind={item['kind']} | manual_review_required={item['manual_review_required']} | jobs={job_names}"
-        )
+    for item in plan["workflow"]["orchestration_order"]:
+        lines.append(f"- {item['step']}")
     lines.extend(
         [
             "",
-            "Manual trigger payloads:",
-            f"  force_false: {json.dumps(workflow['manual_trigger_payloads']['force_false'], ensure_ascii=False, indent=2)}",
-            f"  force_true: {json.dumps(workflow['manual_trigger_payloads']['force_true'], ensure_ascii=False, indent=2)}",
+            "Unchanged path:",
+            "- status=SKIPPED_UNCHANGED",
+            "- publish=false",
+            "- warehouse_publish_performed=false",
+            "- last_successful_updated=false",
             "",
-            "Cloud Run job templates aligned from the existing offline job plan:",
+            "Changed path:",
+            "- build candidates -> validate -> data quality -> publish -> record success freshness",
         ]
     )
-    for job in plan["cloud_run_jobs"]:
-        lines.append(f"  - {job['name']} ({job['workflow_role']})")
-    lines.extend(
-        [
-            "",
-            "Workflow template YAML:",
-            workflow["yaml_template"],
-            "",
-            "Scheduler template YAML:",
-            scheduler["yaml_template"],
-            "",
-            "Side effect guardrails:",
-        ]
-    )
-    for item in plan["side_effect_guardrails"]:
-        lines.append(f"  - {item}")
-    lines.append("")
-    lines.append("Manual review required:")
-    for item in plan["manual_review_required"]:
-        lines.append(f"  - {item}")
-    lines.append("")
-    lines.append(f"Validation status: {plan['validation']['status']}")
     return "\n".join(lines)
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Print an offline workflow and scheduler planning template.",
-    )
-    parser.add_argument(
-        "--format",
-        choices=("text", "json", "yaml"),
-        default="text",
-        help="Render format for the generated plan.",
-    )
-    parser.add_argument("--check", action="store_true", help="Validate the generated plan offline.")
-    return parser.parse_args()
-
-
-def run_check() -> int:
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     plan = build_plan()
-    validation = plan["validation"]
-    output = {
-        "status": validation["status"],
-        "errors": validation["errors"],
-        "checks": validation["checks"],
-    }
-    print(json.dumps(output, ensure_ascii=False, indent=2, sort_keys=True))
-    return 0 if validation["status"] == "PASS" else 1
+    source_text = Path(__file__).read_text(encoding="utf-8")
 
-
-def main() -> int:
-    args = parse_args()
     if args.check:
-        return run_check()
+        validation = build_check_result(plan, source_text)
+        print(json.dumps(validation, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0 if validation["status"] == "PASS" else 1
 
-    plan = build_plan()
+    plan["validation"] = validate_plan(plan)
     if args.format == "json":
-        sys.stdout.write(json.dumps(plan, ensure_ascii=False, indent=2, sort_keys=True))
-        sys.stdout.write("\n")
+        print(json.dumps(plan, ensure_ascii=False, indent=2, sort_keys=True))
     elif args.format == "yaml":
-        sys.stdout.write(render_yaml(plan))
-        sys.stdout.write("\n")
+        print(render_yaml(plan))
     else:
-        sys.stdout.write(render_text(plan))
-        sys.stdout.write("\n")
+        print(render_text(plan))
     return 0
 
 

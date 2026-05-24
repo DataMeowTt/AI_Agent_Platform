@@ -194,7 +194,7 @@ def run_silver_preflight(
     *,
     executor: BigQueryExecutor,
     silver_table_id: str,
-    expected_row_count: int = EXPECTED_SILVER_ROW_COUNT,
+    expected_row_count: int | None = None,
     required_columns: list[str] | None = None,
     non_null_columns: list[str] | None = None,
     max_validation_bytes: int = DEFAULT_MAX_VALIDATION_BYTES,
@@ -226,10 +226,10 @@ def run_silver_preflight(
         f"SELECT COUNT(*) FROM `{silver_table_id}`",
         max_bytes_billed=max_validation_bytes,
     )
-    if row_count != expected_row_count:
-        raise ValueError(
-            f"Silver row_count mismatch: expected={expected_row_count} actual={row_count}"
-        )
+    if expected_row_count is not None and row_count != expected_row_count:
+        raise ValueError(f"Silver row_count mismatch: expected={expected_row_count} actual={row_count}")
+    if row_count <= 0:
+        raise ValueError(f"Silver row_count must be > 0 for scheduled validation: actual={row_count}")
 
     null_expr = ", ".join(
         f"SUM(CASE WHEN `{column}` IS NULL THEN 1 ELSE 0 END) AS `{column}`"
@@ -274,6 +274,7 @@ def run_silver_preflight(
         "silver_table_id": silver_table_id,
         "row_count": row_count,
         "expected_row_count": expected_row_count,
+        "dynamic_row_count_validation": expected_row_count is None,
         "required_columns": required,
         "required_column_schema_modes": {column: schema_modes[column] for column in required},
         "null_counts_non_null_contract_columns": null_counts,
@@ -755,7 +756,7 @@ def run_warehouse_rebuild(
     location: str,
     silver_table_id: str = DEFAULT_SILVER_TABLE,
     output_dir: str | Path = DEFAULT_OUTPUT_DIR,
-    expected_silver_row_count: int = EXPECTED_SILVER_ROW_COUNT,
+    expected_silver_row_count: int | None = None,
     max_validation_bytes: int = DEFAULT_MAX_VALIDATION_BYTES,
 ) -> dict[str, Any]:
     repo_root = Path(__file__).resolve().parents[3]

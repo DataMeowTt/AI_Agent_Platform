@@ -17,7 +17,6 @@ from warehouse.bigquery_warehouse_rebuild import (
     DEFAULT_MAX_VALIDATION_BYTES,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_SILVER_TABLE,
-    EXPECTED_SILVER_ROW_COUNT,
     run_warehouse_rebuild,
 )
 from warehouse.bigquery_warehouse_validation import get_table_contract_columns, load_table_contract
@@ -134,7 +133,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--location", default=DEFAULT_LOCATION)
     parser.add_argument("--silver-table", default=DEFAULT_SILVER_TABLE)
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--expected-silver-row-count", type=int, default=EXPECTED_SILVER_ROW_COUNT)
+    parser.add_argument("--expected-silver-row-count", type=int, default=None)
     parser.add_argument("--max-validation-bytes", type=int, default=DEFAULT_MAX_VALIDATION_BYTES)
     parser.add_argument("--approval-env", default=DEFAULT_APPROVAL_ENV)
     parser.add_argument("--dry-run", action="store_true")
@@ -178,4 +177,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
