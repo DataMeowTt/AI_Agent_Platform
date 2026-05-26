@@ -4,9 +4,8 @@ import json
 import mimetypes
 import os
 import re
-import subprocess
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Callable
 
 from ops.gcs_layout import (
     bronze_prefix,
@@ -17,6 +16,7 @@ from ops.gcs_layout import (
     validate_source_name,
 )
 from ops.manifest import sha256_file
+from sources.gcs_runtime_client import upload_file_to_gcs_uri
 
 
 _BUCKET_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$|^[a-z0-9]$")
@@ -27,6 +27,16 @@ _BRONZE_OBJECT_CONTENT_TYPES = {
     ".yaml": "application/x-yaml",
     ".yml": "application/x-yaml",
 }
+
+
+def _to_run_scoped_object_path(relative_path: str, *, run_date: str, run_id: str) -> str:
+    normalized = str(relative_path).replace("\\", "/")
+    token = f"run_date={run_date}/"
+    marker = normalized.find(token)
+    if marker < 0:
+        raise ValueError(f"Expected run_date segment {token!r} in {relative_path!r}")
+    insert_at = marker + len(token)
+    return f"{normalized[:insert_at]}run_id={run_id}/{normalized[insert_at:]}"
 
 
 def repo_root() -> Path:
@@ -128,6 +138,8 @@ def _bronze_entries(
     output_dir: Path,
     bucket: str,
     run_date: str,
+    run_id: str | None,
+    run_scoped: bool,
 ) -> list[dict[str, Any]]:
     bronze_root = output_dir / "bronze"
     if not bronze_root.exists():
@@ -140,7 +152,12 @@ def _bronze_entries(
         if len(parts) < 4 or parts[0] != "bronze" or parts[2] != f"run_date={run_date}":
             raise ValueError(f"Unexpected bronze path layout: {relative_path!r}")
         source_name = validate_source_name(parts[1])
-        target_uri = build_gcs_uri(bucket, relative_path)
+        target_object_path = (
+            _to_run_scoped_object_path(relative_path, run_date=run_date, run_id=validate_run_id(run_id or ""))
+            if run_scoped
+            else relative_path
+        )
+        target_uri = build_gcs_uri(bucket, target_object_path)
         entries.append(
             _plan_entry(
                 artifact_type="bronze_file",
@@ -159,6 +176,8 @@ def _manifest_entries(
     output_dir: Path,
     bucket: str,
     run_date: str,
+    run_id: str | None,
+    run_scoped: bool,
 ) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
 
@@ -171,7 +190,7 @@ def _manifest_entries(
             artifact_type="source_manifest",
             source_name="source_manifest",
             local_path=source_manifest,
-            target_gcs_uri=source_manifest_path(run_date, bucket),
+            target_gcs_uri=source_manifest_path(run_date, bucket, run_id=run_id if run_scoped else None),
             status="planned" if source_manifest.exists() else "missing",
         )
     )
@@ -180,7 +199,7 @@ def _manifest_entries(
             artifact_type="pipeline_manifest",
             source_name="pipeline_manifest",
             local_path=pipeline_manifest,
-            target_gcs_uri=pipeline_manifest_path(run_date, bucket),
+            target_gcs_uri=pipeline_manifest_path(run_date, bucket, run_id=run_id if run_scoped else None),
             status="planned" if pipeline_manifest.exists() else "missing",
         )
     )
@@ -195,6 +214,7 @@ def _manifest_entries(
                     "manifests",
                     "ops_records",
                     f"run_date={validate_run_date(run_date)}",
+                    *( [f"run_id={validate_run_id(run_id or '')}"] if run_scoped else [] ),
                     "ops_records.json",
                 ),
                 status="planned",
@@ -212,6 +232,8 @@ def build_upload_plan(
     run_date: str,
     dry_run: bool,
     cloud_approved: bool | None = None,
+    run_scoped: bool = False,
+    atomic_create_only: bool = False,
 ) -> dict[str, Any]:
     clean_run_id = validate_run_id(run_id)
     clean_run_date = validate_run_date(run_date)
@@ -221,14 +243,24 @@ def build_upload_plan(
         output_dir=output_path,
         bucket=clean_bucket,
         run_date=clean_run_date,
+        run_id=clean_run_id,
+        run_scoped=run_scoped,
     )
     plan_entries.extend(
         _manifest_entries(
             output_dir=output_path,
             bucket=clean_bucket,
             run_date=clean_run_date,
+            run_id=clean_run_id,
+            run_scoped=run_scoped,
         )
     )
+    if atomic_create_only:
+        for entry in plan_entries:
+            if entry.get("status") == "missing":
+                continue
+            entry["if_generation_match"] = 0
+            entry["atomic_create_only"] = True
     plan_entries = sorted(plan_entries, key=lambda item: item["target_gcs_uri"])
 
     upload_mode = "dry_run" if dry_run or not (cloud_approved if cloud_approved is not None else cloud_write_approved()) else "upload"
@@ -261,15 +293,22 @@ def build_upload_plan(
         "total_bytes": total_bytes,
         "source_names": source_names,
         "target_prefixes": target_prefixes,
-        "source_manifest_path": source_manifest_path(clean_run_date, clean_bucket),
-        "pipeline_manifest_path": pipeline_manifest_path(clean_run_date, clean_bucket),
+        "source_manifest_path": source_manifest_path(
+            clean_run_date, clean_bucket, run_id=clean_run_id if run_scoped else None
+        ),
+        "pipeline_manifest_path": pipeline_manifest_path(
+            clean_run_date, clean_bucket, run_id=clean_run_id if run_scoped else None
+        ),
         "ops_records_path": build_gcs_uri(
             clean_bucket,
             "manifests",
             "ops_records",
             f"run_date={clean_run_date}",
+            *( [f"run_id={clean_run_id}"] if run_scoped else [] ),
             "ops_records.json",
         ),
+        "run_scoped": bool(run_scoped),
+        "atomic_create_only": bool(atomic_create_only),
         "objects": plan_entries,
     }
 
@@ -349,34 +388,11 @@ def write_json(path: str | Path, payload: dict[str, Any]) -> Path:
     return output
 
 
-def preflight_gcloud(bucket: str) -> dict[str, str]:
-    clean_bucket = normalize_bucket(bucket)
-    project = subprocess.run(
-        ["gcloud", "config", "get-value", "project"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-    active_account = subprocess.run(
-        ["gcloud", "auth", "list", "--filter=status:ACTIVE", "--format=value(account)"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-    bucket_desc = subprocess.run(
-        ["gcloud", "storage", "buckets", "describe", f"gs://{clean_bucket}"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-    return {
-        "project": project,
-        "active_account": active_account,
-        "bucket_description": bucket_desc,
-    }
-
-
-def execute_upload_plan(upload_plan: dict[str, Any]) -> dict[str, Any]:
+def execute_upload_plan(
+    upload_plan: dict[str, Any],
+    *,
+    uploader: Callable[..., dict[str, Any]] = upload_file_to_gcs_uri,
+) -> dict[str, Any]:
     if not upload_plan.get("cloud_write_approved"):
         return {
             "status": "blocked",
@@ -387,41 +403,47 @@ def execute_upload_plan(upload_plan: dict[str, Any]) -> dict[str, Any]:
             "uploaded_count": 0,
         }
 
-    preflight = preflight_gcloud(str(upload_plan["gcs_bucket"]))
     uploaded: list[dict[str, Any]] = []
     for entry in upload_plan.get("objects", []):
         if entry.get("status") == "missing":
             uploaded.append({**entry, "status": "skipped"})
             continue
-        subprocess.run(
-            ["gcloud", "storage", "cp", entry["local_path"], entry["target_gcs_uri"]],
-            check=True,
-        )
-        uploaded.append({**entry, "status": "uploaded"})
-
-    verify_results: list[dict[str, Any]] = []
-    for prefix in upload_plan.get("target_prefixes", []):
-        result = subprocess.run(
-            ["gcloud", "storage", "ls", "-l", f"{prefix}**"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        verify_results.append(
-            {
-                "prefix": prefix,
-                "output": result.stdout.strip(),
+        try:
+            uploader(
+                local_path=entry["local_path"],
+                target_gcs_uri=entry["target_gcs_uri"],
+                content_type=entry.get("content_type"),
+                if_generation_match=entry.get("if_generation_match"),
+            )
+            uploaded.append({**entry, "status": "uploaded"})
+        except Exception as exc:
+            uploaded_count = sum(1 for item in uploaded if item["status"] == "uploaded")
+            err_type = exc.__class__.__name__.lower()
+            err_text = str(exc).lower()
+            is_precondition = "precondition" in err_type or "if_generation_match" in err_text or "412" in err_text
+            failed_status = "DESTINATION_COLLISION" if is_precondition else ("PARTIAL_FAILED" if uploaded_count > 0 else "FAILED")
+            return {
+                "status": failed_status,
+                "run_id": upload_plan.get("run_id"),
+                "run_date": upload_plan.get("run_date"),
+                "gcs_bucket": upload_plan.get("gcs_bucket"),
+                "uploaded_count": uploaded_count,
+                "skipped_count": sum(1 for item in uploaded if item["status"] == "skipped"),
+                "cloud_write_performed": uploaded_count > 0,
+                "uploaded_objects": [item for item in uploaded if item["status"] == "uploaded"],
+                "failed_object": {**entry, "status": "failed"},
+                "error_message": str(exc),
+                "atomic_precondition_failed": bool(is_precondition),
+                "objects": [*uploaded, {**entry, "status": "failed", "error_message": str(exc)}],
             }
-        )
 
     return {
         "status": "uploaded",
         "run_id": upload_plan.get("run_id"),
         "run_date": upload_plan.get("run_date"),
         "gcs_bucket": upload_plan.get("gcs_bucket"),
-        "preflight": preflight,
         "uploaded_count": sum(1 for item in uploaded if item["status"] == "uploaded"),
         "skipped_count": sum(1 for item in uploaded if item["status"] == "skipped"),
-        "verify_results": verify_results,
+        "cloud_write_performed": sum(1 for item in uploaded if item["status"] == "uploaded") > 0,
         "objects": uploaded,
     }

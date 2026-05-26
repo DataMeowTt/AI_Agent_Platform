@@ -6,6 +6,7 @@ from ops.gcs_layout import (
     validate_run_id,
     validate_source_name,
 )
+from ops.pipeline_run_metadata import PipelineRunMetadata
 
 
 def build_pipeline_run_record(
@@ -147,3 +148,9 @@ def build_ops_records(
         ],
         "pipeline_manifest_path": pipeline_manifest.get("manifest_path"),
     }
+
+
+def build_pipeline_run_metadata_record(metadata: PipelineRunMetadata | dict) -> dict:
+    if isinstance(metadata, PipelineRunMetadata):
+        return metadata.to_dict()
+    return dict(metadata)

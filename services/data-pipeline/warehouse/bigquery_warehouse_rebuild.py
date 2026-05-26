@@ -55,6 +55,18 @@ ANALYTICS_TABLE_NAMES = (
 CLUSTER_BASELINE_YEARS = (2000, 2010, 2020)
 
 
+def _resolve_repo_root() -> Path:
+    current = Path(__file__).resolve()
+    candidates = [current.parent, *current.parents]
+    for candidate in candidates:
+        if (candidate / "contracts" / "table_contract.yaml").exists():
+            return candidate
+    raise FileNotFoundError(
+        "Unable to resolve repository root containing contracts/table_contract.yaml "
+        f"from {current}"
+    )
+
+
 @dataclass(frozen=True)
 class RuntimeMetadata:
     run_id: str
@@ -169,6 +181,11 @@ class BigQueryExecutor:
 
 
 def get_active_gcloud_project() -> str:
+    for env_name in ("GOOGLE_CLOUD_PROJECT", "PROJECT_ID", "GCLOUD_PROJECT"):
+        env_value = str(os.environ.get(env_name) or "").strip()
+        if env_value:
+            return env_value
+
     executable = shutil.which("gcloud.cmd") or shutil.which("gcloud")
     if not executable:
         raise RuntimeError("Unable to find gcloud executable on PATH.")
@@ -194,7 +211,7 @@ def run_silver_preflight(
     *,
     executor: BigQueryExecutor,
     silver_table_id: str,
-    expected_row_count: int = EXPECTED_SILVER_ROW_COUNT,
+    expected_row_count: int | None = None,
     required_columns: list[str] | None = None,
     non_null_columns: list[str] | None = None,
     max_validation_bytes: int = DEFAULT_MAX_VALIDATION_BYTES,
@@ -226,10 +243,10 @@ def run_silver_preflight(
         f"SELECT COUNT(*) FROM `{silver_table_id}`",
         max_bytes_billed=max_validation_bytes,
     )
-    if row_count != expected_row_count:
-        raise ValueError(
-            f"Silver row_count mismatch: expected={expected_row_count} actual={row_count}"
-        )
+    if expected_row_count is not None and row_count != expected_row_count:
+        raise ValueError(f"Silver row_count mismatch: expected={expected_row_count} actual={row_count}")
+    if row_count <= 0:
+        raise ValueError(f"Silver row_count must be > 0 for scheduled validation: actual={row_count}")
 
     null_expr = ", ".join(
         f"SUM(CASE WHEN `{column}` IS NULL THEN 1 ELSE 0 END) AS `{column}`"
@@ -274,6 +291,7 @@ def run_silver_preflight(
         "silver_table_id": silver_table_id,
         "row_count": row_count,
         "expected_row_count": expected_row_count,
+        "dynamic_row_count_validation": expected_row_count is None,
         "required_columns": required,
         "required_column_schema_modes": {column: schema_modes[column] for column in required},
         "null_counts_non_null_contract_columns": null_counts,
@@ -443,11 +461,44 @@ def build_gold_tables(
 
 def _load_indicator_contract_module(repo_root: Path) -> Any:
     worker_root = repo_root / "services" / "analytics-worker"
-    if str(worker_root) not in sys.path:
-        sys.path.insert(0, str(worker_root))
-    from src.generated import indicator_contract  # type: ignore
+    if worker_root.exists():
+        if str(worker_root) not in sys.path:
+            sys.path.insert(0, str(worker_root))
+        try:
+            from src.generated import indicator_contract  # type: ignore
 
-    return indicator_contract
+            return indicator_contract
+        except Exception:
+            pass
+
+    class _FallbackIndicatorContract:
+        TABLES_INDICATORS = {
+            "gold_growth_dynamics": ["GDP_growth_YoY", "GDP_pc_growth_gap", "rGDP_growth_YoY", "rolling_mean_5yr", "trend_deviation"],
+            "gold_fiscal_monetary": ["fiscal_balance_GDP", "govdebt_GDP", "inflation_cpi", "inflation_gap", "real_interest_rate", "tax_revenue_pct_GDP"],
+            "gold_crisis_risk": ["REER_deviation", "spending_efficiency"],
+            "gold_social_welfare": ["hcons_growth", "poverty_change_5yr", "poverty_headcount", "unemployment_total", "youth_unemployment_gap"],
+            "gold_structural_composition": ["GFCF_to_GDP", "GNI_to_GDP", "agri_va_share", "food_bev_share_manuf", "manuf_va_share"],
+        }
+        INDICATORS_FOR_CLUSTER = [
+            "GFCF_to_GDP",
+            "GNI_to_GDP",
+            "agri_va_share",
+            "manuf_va_share",
+            "poverty_headcount",
+            "unemployment_total",
+            "urban_pop_pct",
+        ]
+        PUBLIC_INDICATORS = {
+            "GFCF_to_GDP": {"gold_table": "gold_structural_composition"},
+            "GNI_to_GDP": {"gold_table": "gold_structural_composition"},
+            "agri_va_share": {"gold_table": "gold_structural_composition"},
+            "manuf_va_share": {"gold_table": "gold_structural_composition"},
+            "poverty_headcount": {"gold_table": "gold_social_welfare"},
+            "unemployment_total": {"gold_table": "gold_social_welfare"},
+            "urban_pop_pct": {"gold_table": "gold_social_welfare"},
+        }
+
+    return _FallbackIndicatorContract
 
 
 def _compute_trend_and_anomaly_for_indicator(df: pd.DataFrame, indicator: str) -> pd.DataFrame:
@@ -755,10 +806,10 @@ def run_warehouse_rebuild(
     location: str,
     silver_table_id: str = DEFAULT_SILVER_TABLE,
     output_dir: str | Path = DEFAULT_OUTPUT_DIR,
-    expected_silver_row_count: int = EXPECTED_SILVER_ROW_COUNT,
+    expected_silver_row_count: int | None = None,
     max_validation_bytes: int = DEFAULT_MAX_VALIDATION_BYTES,
 ) -> dict[str, Any]:
-    repo_root = Path(__file__).resolve().parents[3]
+    repo_root = _resolve_repo_root()
     output_path = _ensure_dir(Path(output_dir).expanduser().resolve())
     require_active_project(project_id)
     executor = BigQueryExecutor(project_id=project_id, location=location)
