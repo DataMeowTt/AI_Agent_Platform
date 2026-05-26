@@ -870,7 +870,8 @@ export class BigQueryService {
         run_id,
         published_at,
         latest_data_year,
-        sources_json
+        sources_json,
+        enabled_sources
       FROM \`${this.tables.opsPipelineRunMetadata}\`
       WHERE status = 'SUCCESS'
         AND warehouse_publish_performed = TRUE
@@ -884,9 +885,10 @@ export class BigQueryService {
     const rows = await this.executeQuery<
       {
         run_id?: string | null;
-        published_at?: string | Date | null;
+        published_at?: unknown;
         latest_data_year?: number | string | null;
         sources_json?: string | null;
+        enabled_sources?: unknown;
       }
     >(sql, {});
 
@@ -908,7 +910,7 @@ export class BigQueryService {
         row.run_id == null ? null : String(row.run_id),
       last_successful_sync_at: this.normalizeIsoDateTime(row.published_at),
       latest_data_year: this.normalizeNullableInteger(row.latest_data_year),
-      sources: this.parseSourcesJson(row.sources_json),
+      sources: this.resolveSources(row.sources_json, row.enabled_sources),
       status: 'success',
     };
   }
@@ -917,15 +919,22 @@ export class BigQueryService {
     return `${this.projectId}.${dataset}.${table}`;
   }
 
-  private normalizeIsoDateTime(value?: string | Date | null): string | null {
+  private normalizeIsoDateTime(value?: unknown): string | null {
     if (value == null) {
       return null;
     }
     if (value instanceof Date) {
       return value.toISOString();
     }
+    if (typeof value === 'object') {
+      const wrapped = value as { value?: unknown };
+      if ('value' in wrapped) {
+        return this.normalizeIsoDateTime(wrapped.value);
+      }
+      return null;
+    }
     const text = String(value).trim();
-    return text ? text : null;
+    return text && text !== '[object Object]' ? text : null;
   }
 
   private normalizeNullableInteger(value?: number | string | null): number | null {
@@ -937,6 +946,44 @@ export class BigQueryService {
       return null;
     }
     return Math.trunc(numeric);
+  }
+
+  private resolveSources(
+    rawSources?: string | null,
+    rawEnabledSources?: unknown,
+  ): DataFreshnessSourceItem[] {
+    const sources = this.parseSourcesJson(rawSources);
+    return sources.length > 0
+      ? sources
+      : this.parseEnabledSources(rawEnabledSources);
+  }
+
+  private parseEnabledSources(raw?: unknown): DataFreshnessSourceItem[] {
+    const value =
+      raw && typeof raw === 'object' && 'value' in raw
+        ? (raw as { value?: unknown }).value
+        : raw;
+
+    let parsed: unknown = value;
+    if (typeof parsed === 'string') {
+      try {
+        parsed = JSON.parse(parsed);
+      } catch {
+        return [];
+      }
+    }
+
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return Array.from(
+      new Set(parsed.map(item => String(item ?? '').trim()).filter(Boolean)),
+    ).map(name => ({
+      name,
+      version: null,
+      updated_at: null,
+    }));
   }
 
   private parseSourcesJson(raw?: string | null): DataFreshnessSourceItem[] {
@@ -955,8 +1002,9 @@ export class BigQueryService {
             return null;
           }
           const source = item as Record<string, unknown>;
+          const rawName = source.name ?? source.source_name;
           const name =
-            source.name == null ? '' : String(source.name).trim();
+            rawName == null ? '' : String(rawName).trim();
           if (!name) {
             return null;
           }

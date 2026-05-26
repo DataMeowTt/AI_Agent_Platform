@@ -161,6 +161,33 @@ describe('BigQueryService', () => {
     });
   });
 
+  it('normalizes BigQuery timestamp wrapper and falls back to enabled source codes', async () => {
+    mockQuery.mockResolvedValue([
+      [
+        {
+          run_id: 'controlled-refresh-20260525T053348Z',
+          published_at: { value: '2026-05-25T05:41:00.000Z' },
+          latest_data_year: 2025,
+          sources_json: '[]',
+          enabled_sources: ['wdi', 'gmd', 'fao_macro'],
+        },
+      ],
+    ]);
+
+    await expect(service.getDataFreshness()).resolves.toEqual({
+      available: true,
+      last_successful_run_id: 'controlled-refresh-20260525T053348Z',
+      last_successful_sync_at: '2026-05-25T05:41:00.000Z',
+      latest_data_year: 2025,
+      sources: [
+        { name: 'wdi', version: null, updated_at: null },
+        { name: 'gmd', version: null, updated_at: null },
+        { name: 'fao_macro', version: null, updated_at: null },
+      ],
+      status: 'success',
+    });
+  });
+
   it('returns unavailable freshness response when no successful row is found', async () => {
     mockQuery.mockResolvedValue([[]]);
 
@@ -185,6 +212,7 @@ describe('BigQueryService', () => {
     expect(queryText).toContain('published_at');
     expect(queryText).toContain('latest_data_year');
     expect(queryText).toContain('sources_json');
+    expect(queryText).toContain('enabled_sources');
     expect(queryText).not.toMatch(/\bSELECT\s+\*/i);
     expect(queryText).toContain("status = 'SUCCESS'");
     expect(queryText).toContain('warehouse_publish_performed = TRUE');
