@@ -388,6 +388,11 @@ def require_approval(env_name: str) -> str:
 
 
 def get_active_gcloud_project() -> str:
+    for env_name in ("GOOGLE_CLOUD_PROJECT", "PROJECT_ID", "GCLOUD_PROJECT"):
+        env_value = str(os.environ.get(env_name) or "").strip()
+        if env_value:
+            return env_value
+
     executable = shutil.which("gcloud.cmd") or shutil.which("gcloud")
     if not executable:
         raise RuntimeError("Unable to find gcloud executable on PATH.")
@@ -539,6 +544,7 @@ def execute_silver_load(
     staging_table: str | None = None,
     write_disposition: str = DEFAULT_WRITE_DISPOSITION,
     max_validation_bytes: int = DEFAULT_MAX_VALIDATION_BYTES,
+    promote_to_production: bool = True,
     client_factory: Callable[[str, str], Any] = _make_client,
     active_project_getter: Callable[[], str] = get_active_gcloud_project,
 ) -> dict[str, Any]:
@@ -603,36 +609,49 @@ def execute_silver_load(
             f"Staging row_count mismatch: staging={staging_row_count} expected={local_validation.row_count}"
         )
 
-    copy_job = client.copy_table(
-        staging_table_id,
-        target_table_id,
-        job_config=_copy_job_config(write_disposition),
-        location=location,
-    )
-    copy_job.result()
+    copy_job_id: str | None = None
+    target_schema_after = list(target_schema_before)
+    target_row_count: int | None = None
+    target_count_job_id: str | None = None
+    observed_source_counts: dict[str, int] | None = None
+    source_counts_job_id: str | None = None
+    source_counts_fallback_reason: str | None = None
+    source_counts_match = False
 
-    target_after = client.get_table(target_table_id)
-    target_schema_after = _assert_schema_contains(target_after, target_table_id)
-    target_row_count, target_count_job_id = _query_scalar(
-        client,
-        f"SELECT COUNT(*) FROM `{target_table_id}`",
-        location=location,
-        max_validation_bytes=max_validation_bytes,
-    )
-    if target_row_count != local_validation.row_count:
-        raise ValueError(f"Target row_count mismatch: target={target_row_count} expected={local_validation.row_count}")
-
-    observed_source_counts, source_counts_job_id, source_counts_fallback_reason = _query_source_counts(
-        client,
-        target_table_id,
-        location=location,
-        max_validation_bytes=max_validation_bytes,
-    )
-    source_counts_match = observed_source_counts == local_validation.source_counts
-    if observed_source_counts is not None and source_counts_fallback_reason is None and not source_counts_match:
-        raise ValueError(
-            f"Target source_counts mismatch: target={observed_source_counts!r} expected={local_validation.source_counts!r}"
+    if promote_to_production:
+        copy_job = client.copy_table(
+            staging_table_id,
+            target_table_id,
+            job_config=_copy_job_config(write_disposition),
+            location=location,
         )
+        copy_job.result()
+        copy_job_id = str(copy_job.job_id)
+
+        target_after = client.get_table(target_table_id)
+        target_schema_after = _assert_schema_contains(target_after, target_table_id)
+        target_row_count, target_count_job_id = _query_scalar(
+            client,
+            f"SELECT COUNT(*) FROM `{target_table_id}`",
+            location=location,
+            max_validation_bytes=max_validation_bytes,
+        )
+        if target_row_count != local_validation.row_count:
+            raise ValueError(
+                f"Target row_count mismatch: target={target_row_count} expected={local_validation.row_count}"
+            )
+
+        observed_source_counts, source_counts_job_id, source_counts_fallback_reason = _query_source_counts(
+            client,
+            target_table_id,
+            location=location,
+            max_validation_bytes=max_validation_bytes,
+        )
+        source_counts_match = observed_source_counts == local_validation.source_counts
+        if observed_source_counts is not None and source_counts_fallback_reason is None and not source_counts_match:
+            raise ValueError(
+                f"Target source_counts mismatch: target={observed_source_counts!r} expected={local_validation.source_counts!r}"
+            )
 
     result = {
         "approval_env": approval_env,
@@ -650,8 +669,9 @@ def execute_silver_load(
         "target_rows_before": target_rows_before,
         "staging_row_count": staging_row_count,
         "target_row_count_after": target_row_count,
+        "promote_to_production": bool(promote_to_production),
         "load_job_ids": load_job_ids,
-        "copy_job_id": str(copy_job.job_id),
+        "copy_job_id": copy_job_id,
         "validation_query_job_ids": {
             "staging_count": staging_count_job_id,
             "target_count": target_count_job_id,
@@ -684,18 +704,106 @@ def execute_silver_load(
             "target_rows_before": target_rows_before,
             "staging_row_count": staging_row_count,
             "target_row_count_after": target_row_count,
-            "row_count_matches_expected": target_row_count == local_validation.row_count,
+            "row_count_matches_expected": target_row_count == local_validation.row_count if promote_to_production else True,
             "source_counts": observed_source_counts,
-            "source_counts_match_expected": source_counts_match,
+            "source_counts_match_expected": source_counts_match if promote_to_production else True,
             "source_counts_fallback_reason": source_counts_fallback_reason,
             "validation_query_job_ids": result["validation_query_job_ids"],
             "max_validation_bytes": max_validation_bytes,
+            "promote_to_production": bool(promote_to_production),
         },
     }
     output_path = _resolve_path(output_dir)
     _write_json(output_path / "load_result.json", result)
     _write_json(output_path / "load_validation.json", validation)
     return {"result": result, "validation": validation}
+
+
+def stage_and_validate_silver_candidate(
+    *,
+    plan: dict[str, Any],
+    load_plan_path: str,
+    project_id: str,
+    dataset: str,
+    table: str,
+    location: str,
+    approval_env: str = DEFAULT_APPROVAL_ENV,
+    output_dir: str | Path = DEFAULT_OUTPUT_DIR,
+    staging_table: str | None = None,
+    max_validation_bytes: int = DEFAULT_MAX_VALIDATION_BYTES,
+    client_factory: Callable[[str, str], Any] = _make_client,
+    active_project_getter: Callable[[], str] = get_active_gcloud_project,
+) -> dict[str, Any]:
+    payload = execute_silver_load(
+        plan=plan,
+        load_plan_path=load_plan_path,
+        project_id=project_id,
+        dataset=dataset,
+        table=table,
+        location=location,
+        approval_env=approval_env,
+        output_dir=output_dir,
+        staging_table=staging_table,
+        write_disposition=DEFAULT_WRITE_DISPOSITION,
+        max_validation_bytes=max_validation_bytes,
+        promote_to_production=False,
+        client_factory=client_factory,
+        active_project_getter=active_project_getter,
+    )
+    return payload
+
+
+def promote_silver_candidate(
+    *,
+    project_id: str,
+    dataset: str,
+    table: str,
+    location: str,
+    candidate_table_id: str,
+    expected_row_count: int,
+    approval_env: str = DEFAULT_APPROVAL_ENV,
+    max_validation_bytes: int = DEFAULT_MAX_VALIDATION_BYTES,
+    client_factory: Callable[[str, str], Any] = _make_client,
+    active_project_getter: Callable[[], str] = get_active_gcloud_project,
+) -> dict[str, Any]:
+    target_table_id = validate_target_args(project_id=project_id, dataset=dataset, table=table, location=location)
+    approval_value = require_approval(approval_env)
+    active_project = require_active_project(project_id, active_project_getter)
+    client = client_factory(project_id, location)
+
+    copy_job = client.copy_table(
+        candidate_table_id,
+        target_table_id,
+        job_config=_copy_job_config(DEFAULT_WRITE_DISPOSITION),
+        location=location,
+    )
+    copy_job.result()
+
+    target_obj = client.get_table(target_table_id)
+    target_schema = _assert_schema_contains(target_obj, target_table_id)
+    target_row_count, target_count_job_id = _query_scalar(
+        client,
+        f"SELECT COUNT(*) FROM `{target_table_id}`",
+        location=location,
+        max_validation_bytes=max_validation_bytes,
+    )
+    if target_row_count != int(expected_row_count):
+        raise ValueError(f"Target row_count mismatch: target={target_row_count} expected={expected_row_count}")
+
+    return {
+        "approval_env": approval_env,
+        "approval_value": approval_value,
+        "active_project": active_project,
+        "bigquery_backend": getattr(client, "backend", "python_client"),
+        "candidate_table_id": candidate_table_id,
+        "target_table_id": target_table_id,
+        "copy_job_id": str(copy_job.job_id),
+        "target_row_count": target_row_count,
+        "expected_row_count": int(expected_row_count),
+        "target_schema": target_schema,
+        "validation_query_job_id": target_count_job_id,
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

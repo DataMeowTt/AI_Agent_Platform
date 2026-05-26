@@ -31,6 +31,20 @@ class WarehouseWriteResult:
     copy_job_id: str
 
 
+@dataclass(frozen=True)
+class WarehouseCandidateResult:
+    dataset: str
+    staging_table: str
+    production_table: str
+    staging_table_id: str
+    production_table_id: str
+    write_disposition: str
+    local_row_count: int
+    staging_row_count: int
+    staging_columns: list[str]
+    load_job_id: str
+
+
 def require_write_approval(env_name: str = DEFAULT_APPROVAL_ENV) -> str:
     value = os.environ.get(env_name)
     if value != "true":
@@ -256,6 +270,37 @@ def publish_with_staging(
     local_row_count: int,
     writer: BigQueryWarehouseWriter | None = None,
 ) -> WarehouseWriteResult:
+    candidate = stage_and_validate_candidate(
+        project_id=project_id,
+        location=location,
+        dataset=dataset,
+        staging_table=staging_table,
+        production_table=production_table,
+        parquet_path=parquet_path,
+        expected_required_columns=expected_required_columns,
+        local_row_count=local_row_count,
+        writer=writer,
+    )
+    return promote_validated_candidate(
+        project_id=project_id,
+        location=location,
+        candidate=candidate,
+        writer=writer,
+    )
+
+
+def stage_and_validate_candidate(
+    *,
+    project_id: str,
+    location: str,
+    dataset: str,
+    staging_table: str,
+    production_table: str,
+    parquet_path: Path,
+    expected_required_columns: list[str],
+    local_row_count: int,
+    writer: BigQueryWarehouseWriter | None = None,
+) -> WarehouseCandidateResult:
     active_writer = writer or BigQueryWarehouseWriter(project_id=project_id, location=location)
     staging_table_id = f"{project_id}.{dataset}.{staging_table}"
     production_table_id = f"{project_id}.{dataset}.{production_table}"
@@ -275,17 +320,7 @@ def publish_with_staging(
     missing_columns = [column for column in expected_required_columns if column not in staging_columns]
     if missing_columns:
         raise ValueError(f"Staging schema missing columns for {staging_table_id}: {missing_columns}")
-    copy_job_id = active_writer.copy_table(
-        source_table_id=staging_table_id,
-        destination_table_id=production_table_id,
-    )
-    production_row_count = active_writer.count_rows(production_table_id)
-    if production_row_count != local_row_count:
-        raise ValueError(
-            f"Production row_count mismatch for {production_table_id}: "
-            f"production={production_row_count} local={local_row_count}"
-        )
-    return WarehouseWriteResult(
+    return WarehouseCandidateResult(
         dataset=dataset,
         staging_table=staging_table,
         production_table=production_table,
@@ -294,9 +329,41 @@ def publish_with_staging(
         write_disposition="WRITE_TRUNCATE",
         local_row_count=local_row_count,
         staging_row_count=staging_row_count,
-        production_row_count=production_row_count,
         staging_columns=staging_columns,
         load_job_id=load_job_id,
+    )
+
+
+def promote_validated_candidate(
+    *,
+    project_id: str,
+    location: str,
+    candidate: WarehouseCandidateResult,
+    writer: BigQueryWarehouseWriter | None = None,
+) -> WarehouseWriteResult:
+    active_writer = writer or BigQueryWarehouseWriter(project_id=project_id, location=location)
+    copy_job_id = active_writer.copy_table(
+        source_table_id=candidate.staging_table_id,
+        destination_table_id=candidate.production_table_id,
+    )
+    production_row_count = active_writer.count_rows(candidate.production_table_id)
+    if production_row_count != candidate.local_row_count:
+        raise ValueError(
+            f"Production row_count mismatch for {candidate.production_table_id}: "
+            f"production={production_row_count} local={candidate.local_row_count}"
+        )
+    return WarehouseWriteResult(
+        dataset=candidate.dataset,
+        staging_table=candidate.staging_table,
+        production_table=candidate.production_table,
+        staging_table_id=candidate.staging_table_id,
+        production_table_id=candidate.production_table_id,
+        write_disposition="WRITE_TRUNCATE",
+        local_row_count=candidate.local_row_count,
+        staging_row_count=candidate.staging_row_count,
+        production_row_count=production_row_count,
+        staging_columns=candidate.staging_columns,
+        load_job_id=candidate.load_job_id,
         copy_job_id=copy_job_id,
     )
 
